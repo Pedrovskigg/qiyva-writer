@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="add-image.svg">../src/assets/icons/add-image.svg</file>
+        <file alias="bold.svg">../src/assets/icons/bold.svg</file>
+        <file alias="change-font.svg">../src/assets/icons/change-font.svg</file>
+        <file alias="focusmode-off.svg">../src/assets/icons/focusmode-off.svg</file>
+        <file alias="focusmode-on.svg">../src/assets/icons/focusmode-on.svg</file>
+        <file alias="font-size.svg">../src/assets/icons/font-size.svg</file>
+        <file alias="italic.svg">../src/assets/icons/italic.svg</file>
+        <file alias="text-spacing.svg">../src/assets/icons/text-spacing.svg</file>
+    </qresource>
+</RCC>

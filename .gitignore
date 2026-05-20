@@ -23,7 +23,6 @@
 *.dll
 *.so.*
 
-
 # Fortran module files
 *.mod
 *.smod
@@ -43,10 +42,14 @@
 build/
 Build/
 build-*/
+out/
+cmake-build-*/
 
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
+CMakeScripts/
+CTestTestfile.cmake
 cmake_install.cmake
 Makefile
 install_manifest.txt
@@ -57,6 +60,8 @@ compile_commands.json
 *.log
 *.bak
 *.swp
+*.swo
+*~
 
 # vcpkg
 vcpkg_installed/
@@ -67,3 +72,26 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Qt
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+*.moc
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*_qmlcache.qrc
+*.qm
+.qt/
+
+# IDE / Editor
+.vs/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
