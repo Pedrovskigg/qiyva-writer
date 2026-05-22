@@ -18,6 +18,7 @@
 #include <QTextBlockFormat>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <QToolButton>
 #include <QTextFragment>
 #include <QTextFrame>
 #include <QTextFrameFormat>
@@ -48,6 +49,11 @@
 #include "ProjectStorage.h"
 #include "RefMenuPanel.h"
 #include "SceneUtils.h"
+#include "SelectionPopup.h"
+#include "SettingsPanel.h"
+#include "SpellChecker.h"
+#include "SpellEditor.h"
+#include "SpellHighlighter.h"
 #include "WordCountPanel.h"
 #include "WordCounter.h"
 #include "Theme.h"
@@ -72,7 +78,7 @@ void applyFloatFrameStyle(QTextFrameFormat &ff, bool isLeft, int w)
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , editor(new QTextEdit)
+    , editor(new SpellEditor)
     , toolbar(new TopToolbar(this))
     , imageOverlay(nullptr)
     , leftBar(nullptr)
@@ -87,6 +93,14 @@ MainWindow::MainWindow(QWidget *parent)
     , wordCountPanel(nullptr)
     , refMenuPanel(nullptr)
     , elementsStore(nullptr)
+    , spellChecker(nullptr)
+    , spellHighlighter(nullptr)
+    , settingsPanel(nullptr)
+    , selectionPopup(nullptr)
+    , selBoldBtn(nullptr)
+    , selItalicBtn(nullptr)
+    , selUnderlineBtn(nullptr)
+    , selStrikeBtn(nullptr)
     , sceneDetectTimer(nullptr)
     , currentFontFamily(QStringLiteral("Alegreya"))
     , currentFontSize(16)
@@ -141,6 +155,50 @@ void MainWindow::setupEditor()
     manuscriptPanel = new ManuscriptPanel(projectModel, this);
     editorHost = new EditorHost(editor, docCache, projectModel, this);
     editor->setEnabled(false);
+
+    // Spell checker + highlighter. Idioma e custom dict são aplicados a partir
+    // do projectModel quando ele carrega (onLoaded → applySpellLanguageFromModel).
+    spellChecker = new SpellChecker(this);
+    editor->setSpellChecker(spellChecker);
+    spellHighlighter = new SpellHighlighter(editor->document(), spellChecker, this);
+    // Durante o load de um doc novo, o highlight roda numa thread única e pode
+    // engasgar — suspende durante o load, reaplica em seguida.
+    connect(editorHost, &EditorHost::contentLoaded, this, [this]() {
+        if (spellHighlighter) spellHighlighter->rehighlight();
+    });
+
+    // Mini-toolbar de seleção (infra para CreateDocFrom, Marcadores, Glossário).
+    // Versão inicial leva apenas as ações de formatação inline; outros features
+    // pendurarão suas ações com addAction(...).
+    selectionPopup = new SelectionPopup(editor, this);
+    selBoldBtn = selectionPopup->addAction(QStringLiteral("bold.svg"), tr("Negrito"),
+        [this]() {
+            const bool now = editor && editor->currentCharFormat().fontWeight() > QFont::Normal;
+            setBold(!now);
+            syncInlineFormatButtons();
+        });
+    selBoldBtn->setCheckable(true);
+    selItalicBtn = selectionPopup->addAction(QStringLiteral("italic.svg"), tr("Itálico"),
+        [this]() {
+            const bool now = editor && editor->currentCharFormat().fontItalic();
+            setItalic(!now);
+            syncInlineFormatButtons();
+        });
+    selItalicBtn->setCheckable(true);
+    selUnderlineBtn = selectionPopup->addAction(QStringLiteral("underline.svg"), tr("Sublinhado"),
+        [this]() {
+            const bool now = editor && editor->currentCharFormat().fontUnderline();
+            setUnderline(!now);
+            syncInlineFormatButtons();
+        });
+    selUnderlineBtn->setCheckable(true);
+    selStrikeBtn = selectionPopup->addAction(QStringLiteral("strikethrough.svg"), tr("Tachado"),
+        [this]() {
+            const bool now = editor && editor->currentCharFormat().fontStrikeOut();
+            setStrikethrough(!now);
+            syncInlineFormatButtons();
+        });
+    selStrikeBtn->setCheckable(true);
     variationBar = new VariationBar(projectModel, editorHost, this);
     connect(editorHost, &EditorHost::viewModeChanged, variationBar, &VariationBar::refresh);
 
@@ -202,6 +260,7 @@ void MainWindow::setupEditor()
             toolbar->setLineHeightPercent(currentLineHeight);
         }
         applyEditorStyle();
+        applySpellLanguageFromModel();
     });
 
     sceneDetectTimer = new QTimer(this);
@@ -933,6 +992,34 @@ void MainWindow::setupToolbar()
     connect(toolbar, &TopToolbar::saveProjectRequested, this, [this]() {
         if (projectSaver) projectSaver->saveProject();
     });
+    connect(toolbar, &TopToolbar::settingsRequested, this, &MainWindow::onSettingsRequested);
+
+    connect(toolbar, &TopToolbar::boldToggled, this, &MainWindow::setBold);
+    connect(toolbar, &TopToolbar::italicToggled, this, &MainWindow::setItalic);
+    connect(toolbar, &TopToolbar::underlineToggled, this, &MainWindow::setUnderline);
+    connect(toolbar, &TopToolbar::strikethroughToggled, this, &MainWindow::setStrikethrough);
+    connect(editor, &QTextEdit::currentCharFormatChanged, this, &MainWindow::syncInlineFormatButtons);
+
+    auto* boldShortcut = new QShortcut(QKeySequence::Bold, this);
+    connect(boldShortcut, &QShortcut::activated, this, [this]() {
+        setBold(editor && editor->currentCharFormat().fontWeight() <= QFont::Normal);
+        syncInlineFormatButtons();
+    });
+    auto* italicShortcut = new QShortcut(QKeySequence::Italic, this);
+    connect(italicShortcut, &QShortcut::activated, this, [this]() {
+        setItalic(editor && !editor->currentCharFormat().fontItalic());
+        syncInlineFormatButtons();
+    });
+    auto* underlineShortcut = new QShortcut(QKeySequence::Underline, this);
+    connect(underlineShortcut, &QShortcut::activated, this, [this]() {
+        setUnderline(editor && !editor->currentCharFormat().fontUnderline());
+        syncInlineFormatButtons();
+    });
+    auto* strikeShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+S")), this);
+    connect(strikeShortcut, &QShortcut::activated, this, [this]() {
+        setStrikethrough(editor && !editor->currentCharFormat().fontStrikeOut());
+        syncInlineFormatButtons();
+    });
 }
 
 void MainWindow::setAvailableFontFamilies(const QStringList &families)
@@ -1009,6 +1096,70 @@ void MainWindow::setParagraphSpacingAfter(int px)
     paragraphSpacingAfter = px;
     if (projectModel) projectModel->setParagraphSpacingAfter(px);
     applyEditorStyle();
+}
+
+void MainWindow::setBold(bool enabled)
+{
+    if (!editor) return;
+    QTextCharFormat fmt;
+    fmt.setFontWeight(enabled ? QFont::Bold : QFont::Normal);
+    QTextCursor cursor = editor->textCursor();
+    if (!cursor.hasSelection()) cursor.select(QTextCursor::WordUnderCursor);
+    cursor.mergeCharFormat(fmt);
+    editor->mergeCurrentCharFormat(fmt);
+}
+
+void MainWindow::setItalic(bool enabled)
+{
+    if (!editor) return;
+    QTextCharFormat fmt;
+    fmt.setFontItalic(enabled);
+    QTextCursor cursor = editor->textCursor();
+    if (!cursor.hasSelection()) cursor.select(QTextCursor::WordUnderCursor);
+    cursor.mergeCharFormat(fmt);
+    editor->mergeCurrentCharFormat(fmt);
+}
+
+void MainWindow::setUnderline(bool enabled)
+{
+    if (!editor) return;
+    QTextCharFormat fmt;
+    fmt.setFontUnderline(enabled);
+    QTextCursor cursor = editor->textCursor();
+    if (!cursor.hasSelection()) cursor.select(QTextCursor::WordUnderCursor);
+    cursor.mergeCharFormat(fmt);
+    editor->mergeCurrentCharFormat(fmt);
+}
+
+void MainWindow::setStrikethrough(bool enabled)
+{
+    if (!editor) return;
+    QTextCharFormat fmt;
+    fmt.setFontStrikeOut(enabled);
+    QTextCursor cursor = editor->textCursor();
+    if (!cursor.hasSelection()) cursor.select(QTextCursor::WordUnderCursor);
+    cursor.mergeCharFormat(fmt);
+    editor->mergeCurrentCharFormat(fmt);
+}
+
+void MainWindow::syncInlineFormatButtons()
+{
+    if (!editor) return;
+    const QTextCharFormat fmt = editor->currentCharFormat();
+    const bool b = fmt.fontWeight() > QFont::Normal;
+    const bool i = fmt.fontItalic();
+    const bool u = fmt.fontUnderline();
+    const bool s = fmt.fontStrikeOut();
+    if (toolbar) {
+        toolbar->setBoldChecked(b);
+        toolbar->setItalicChecked(i);
+        toolbar->setUnderlineChecked(u);
+        toolbar->setStrikethroughChecked(s);
+    }
+    if (selBoldBtn)      selBoldBtn->setChecked(b);
+    if (selItalicBtn)    selItalicBtn->setChecked(i);
+    if (selUnderlineBtn) selUnderlineBtn->setChecked(u);
+    if (selStrikeBtn)    selStrikeBtn->setChecked(s);
 }
 
 void MainWindow::setFocusMode(bool enabled)
@@ -1369,6 +1520,7 @@ void MainWindow::applyProjectRoot(const QString& root)
     if (wordCounter) wordCounter->setProjectRoot(root);
     if (refMenuPanel) refMenuPanel->setProjectRoot(root);
     if (elementsStore) elementsStore->setProjectRoot(root);
+    if (spellChecker) spellChecker->setProjectRoot(root);
     // Atualiza o título com o nome da pasta do projeto.
     const QString name = QDir(root).dirName();
     baseWindowTitle = name.isEmpty() ? tr("Mira Writing") : tr("Mira Writing — %1").arg(name);
@@ -1545,6 +1697,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QMainWindow::resizeEvent(event);
     positionWordCountPanel();
     positionSidePanels();
+    if (toolbar && editor) {
+        const QPoint editorCenterGlobal =
+            editor->mapToGlobal(QPoint(editor->width() / 2, 0));
+        const int anchorX = toolbar->mapFromGlobal(editorCenterGlobal).x();
+        toolbar->setTitleAnchorX(anchorX);
+    }
     // RefMenuPanel: drag/resize livres. O showEvent dele já mantém dentro do pai
     // quando reaberto, e a geometria persiste em QSettings.
 }
@@ -1564,5 +1722,56 @@ void MainWindow::onOpenProjectRequested()
     if (!loadProjectFrom(chosen, &err)) {
         QMessageBox::warning(this, tr("Erro ao abrir"),
             tr("Não foi possível abrir o projeto:\n%1").arg(err));
+    }
+}
+
+void MainWindow::onSettingsRequested()
+{
+    if (!settingsPanel) {
+        settingsPanel = new SettingsPanel(this);
+        settingsPanel->setAvailableSpellLanguages(SpellChecker::availableLanguages());
+
+        connect(settingsPanel, &SettingsPanel::spellEnabledChanged, this, [this](bool enabled) {
+            if (!projectModel || !spellChecker) return;
+            if (enabled) {
+                // Liga com o idioma mostrado no combo (ou o último salvo, se vazio).
+                QString code = settingsPanel->spellLanguage();
+                if (code.isEmpty()) {
+                    const auto langs = SpellChecker::availableLanguages();
+                    if (!langs.isEmpty()) code = langs.first().first;
+                }
+                projectModel->setSpellLanguage(code);
+                spellChecker->setLanguage(code);
+                settingsPanel->setSpellLanguage(code);
+            } else {
+                projectModel->setSpellLanguage(QString());
+                spellChecker->setLanguage(QString());
+            }
+        });
+        connect(settingsPanel, &SettingsPanel::spellLanguageChanged, this, [this](const QString& code) {
+            if (!projectModel || !spellChecker) return;
+            projectModel->setSpellLanguage(code);
+            spellChecker->setLanguage(code);
+        });
+    }
+
+    // Atualiza a UI do painel com o estado atual antes de mostrar.
+    const QString lang = projectModel ? projectModel->spellLanguage() : QString();
+    settingsPanel->setSpellEnabled(!lang.isEmpty());
+    if (!lang.isEmpty()) settingsPanel->setSpellLanguage(lang);
+
+    settingsPanel->show();
+    settingsPanel->raise();
+    settingsPanel->activateWindow();
+}
+
+void MainWindow::applySpellLanguageFromModel()
+{
+    if (!projectModel || !spellChecker) return;
+    const QString code = projectModel->spellLanguage();
+    spellChecker->setLanguage(code);
+    if (settingsPanel) {
+        settingsPanel->setSpellEnabled(!code.isEmpty());
+        if (!code.isEmpty()) settingsPanel->setSpellLanguage(code);
     }
 }

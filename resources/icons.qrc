@@ -19,7 +19,9 @@
         <file alias="save-project.svg">../src/assets/icons/save-project.svg</file>
         <file alias="search.svg">../src/assets/icons/search.svg</file>
         <file alias="settings.svg">../src/assets/icons/settings.svg</file>
+        <file alias="strikethrough.svg">../src/assets/icons/strikethrough.svg</file>
         <file alias="text-spacing.svg">../src/assets/icons/text-spacing.svg</file>
+        <file alias="underline.svg">../src/assets/icons/underline.svg</file>
         <file alias="theme-panel.svg">../src/assets/icons/theme-panel.svg</file>
         <file alias="leftbar/manuscriptpanel.svg">../src/assets/icons/leftbar/manuscriptpanel.svg</file>
         <file alias="leftbar/projectinfo.svg">../src/assets/icons/leftbar/projectinfo.svg</file>

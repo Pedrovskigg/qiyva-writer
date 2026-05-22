@@ -290,6 +290,22 @@ void ProjectModel::setLineHeightPercent(int percent) {
     emit settingsChanged();
 }
 
+QString ProjectModel::spellLanguage() const {
+    const auto v = m_settings.value(QStringLiteral("spellLanguage"));
+    if (v.isUndefined() || v.isNull()) return QString();
+    return v.toString();
+}
+
+void ProjectModel::setSpellLanguage(const QString& code) {
+    if (spellLanguage() == code) return;
+    if (code.isEmpty()) {
+        m_settings.remove(QStringLiteral("spellLanguage"));
+    } else {
+        m_settings.insert(QStringLiteral("spellLanguage"), code);
+    }
+    emit settingsChanged();
+}
+
 void ProjectModel::setUi(const QJsonObject& u) {
     m_ui = u;
     emit uiChanged();

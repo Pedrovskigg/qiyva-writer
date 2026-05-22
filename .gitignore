@@ -95,3 +95,6 @@ ui_*.h
 # OS
 .DS_Store
 Thumbs.db
+
+# Third-party sources (clonar manualmente — veja cmake/Hunspell.cmake)
+third_party/hunspell/

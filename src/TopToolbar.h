@@ -22,7 +22,16 @@ public:
     void setFirstLineIndentEnabled(bool enabled);
     void setParagraphSpacingBefore(int px);
     void setParagraphSpacingAfter(int px);
+    void setBoldChecked(bool checked);
+    void setItalicChecked(bool checked);
+    void setUnderlineChecked(bool checked);
+    void setStrikethroughChecked(bool checked);
     void setDocumentTitle(const QString &title);
+    // x em coords locais da TopToolbar; passe -1 para retomar o centro geométrico.
+    void setTitleAnchorX(int x);
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 signals:
     void fontFamilyChanged(const QString &family);
@@ -37,9 +46,11 @@ signals:
     void openProjectRequested();
     void saveProjectRequested();
     void refMenuToggleRequested();
-    // Placeholders — ainda sem implementação
     void boldToggled(bool enabled);
     void italicToggled(bool enabled);
+    void underlineToggled(bool enabled);
+    void strikethroughToggled(bool enabled);
+    // Placeholders — ainda sem implementação
     void glossaryRequested();
     void readModeToggled(bool enabled);
     void searchRequested();
@@ -55,6 +66,8 @@ private:
     QToolButton *saveProjectButton;
     QToolButton *boldButton;
     QToolButton *italicButton;
+    QToolButton *underlineButton;
+    QToolButton *strikethroughButton;
     QToolButton *glossaryButton;
     QToolButton *readModeButton;
     QToolButton *focusButton;
@@ -86,11 +99,13 @@ private:
     int currentLineHeightPercent;
     int currentParaSpaceBefore = 0;
     int currentParaSpaceAfter = 0;
+    int titleAnchorX = -1;
     QLabel *paraBeforeValueLabel = nullptr;
     QLabel *paraAfterValueLabel = nullptr;
 
     void buildSizeMenu();
     void buildSpacingMenu();
+    void positionDocTitle();
     void updateSizeMenuState();
     void updateSpacingMenuChecks();
     void applySize(int pt);

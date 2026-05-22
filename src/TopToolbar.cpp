@@ -76,6 +76,8 @@ TopToolbar::TopToolbar(QWidget *parent)
     , saveProjectButton(makeIconButton(this))
     , boldButton(makeIconButton(this))
     , italicButton(makeIconButton(this))
+    , underlineButton(makeIconButton(this))
+    , strikethroughButton(makeIconButton(this))
     , glossaryButton(makeIconButton(this))
     , readModeButton(makeIconButton(this))
     , focusButton(makeIconButton(this))
@@ -132,6 +134,18 @@ TopToolbar::TopToolbar(QWidget *parent)
     italicButton->setCheckable(true);
     italicButton->setToolTip(tr("Itálico (Ctrl+I)"));
     connect(italicButton, &QToolButton::toggled, this, &TopToolbar::italicToggled);
+
+    underlineButton->setObjectName(QStringLiteral("ttbInline"));
+    underlineButton->setIcon(loadIcon(QStringLiteral("underline.svg")));
+    underlineButton->setCheckable(true);
+    underlineButton->setToolTip(tr("Sublinhado (Ctrl+U)"));
+    connect(underlineButton, &QToolButton::toggled, this, &TopToolbar::underlineToggled);
+
+    strikethroughButton->setObjectName(QStringLiteral("ttbInline"));
+    strikethroughButton->setIcon(loadIcon(QStringLiteral("strikethrough.svg")));
+    strikethroughButton->setCheckable(true);
+    strikethroughButton->setToolTip(tr("Tachado (Ctrl+Shift+S)"));
+    connect(strikethroughButton, &QToolButton::toggled, this, &TopToolbar::strikethroughToggled);
 
     // ---------------- Grupo C: Ferramentas ----------------
     glossaryButton->setObjectName(QStringLiteral("ttbTool"));
@@ -253,6 +267,9 @@ TopToolbar::TopToolbar(QWidget *parent)
         "}"));
     docTitleLabel->setTextInteractionFlags(Qt::NoTextInteraction);
     docTitleLabel->setText(QString());
+    // Sai do fluxo do layout: posicionado manualmente sobre o centro real da
+    // TopToolbar, para não deslocar quando um lado fica mais largo que o outro.
+    docTitleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     // ---------------- Layout ----------------
     // Esquerda: Projeto (new/open/save) + Editor (font/size/lineHeight/indent/B/I)
@@ -275,10 +292,10 @@ TopToolbar::TopToolbar(QWidget *parent)
     layout->addWidget(indentButton);
     layout->addWidget(boldButton);
     layout->addWidget(italicButton);
+    layout->addWidget(underlineButton);
+    layout->addWidget(strikethroughButton);
 
-    // --- Centro: título do doc ---
-    layout->addStretch(1);
-    layout->addWidget(docTitleLabel);
+    // --- Centro: stretch reservado (título é posicionado manualmente) ---
     layout->addStretch(1);
 
     // --- Direita: Ferramentas ---
@@ -309,6 +326,30 @@ void TopToolbar::setDocumentTitle(const QString &title)
 {
     if (!docTitleLabel) return;
     docTitleLabel->setText(title);
+    docTitleLabel->adjustSize();
+    positionDocTitle();
+    docTitleLabel->raise();
+}
+
+void TopToolbar::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    positionDocTitle();
+}
+
+void TopToolbar::setTitleAnchorX(int x)
+{
+    titleAnchorX = x;
+    positionDocTitle();
+}
+
+void TopToolbar::positionDocTitle()
+{
+    if (!docTitleLabel) return;
+    const int centerX = (titleAnchorX >= 0) ? titleAnchorX : (width() / 2);
+    const int x = centerX - docTitleLabel->width() / 2;
+    const int y = (height() - docTitleLabel->height()) / 2;
+    docTitleLabel->move(x, y);
 }
 
 void TopToolbar::setFontFamilies(const QStringList &families, const QString &current)
@@ -336,6 +377,30 @@ void TopToolbar::setFirstLineIndentEnabled(bool enabled)
 {
     QSignalBlocker block(indentButton);
     indentButton->setChecked(enabled);
+}
+
+void TopToolbar::setBoldChecked(bool checked)
+{
+    QSignalBlocker block(boldButton);
+    boldButton->setChecked(checked);
+}
+
+void TopToolbar::setItalicChecked(bool checked)
+{
+    QSignalBlocker block(italicButton);
+    italicButton->setChecked(checked);
+}
+
+void TopToolbar::setUnderlineChecked(bool checked)
+{
+    QSignalBlocker block(underlineButton);
+    underlineButton->setChecked(checked);
+}
+
+void TopToolbar::setStrikethroughChecked(bool checked)
+{
+    QSignalBlocker block(strikethroughButton);
+    strikethroughButton->setChecked(checked);
 }
 
 void TopToolbar::setParagraphSpacingBefore(int px)

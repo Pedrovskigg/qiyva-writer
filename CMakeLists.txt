@@ -11,6 +11,9 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets Svg LinguistTools)
 
 qt_standard_project_setup()
 
+# Hunspell (corretor ortográfico) — compilado a partir de third_party/hunspell.
+include(cmake/Hunspell.cmake)
+
 qt_add_executable(mira-writing
     src/main.cpp
     src/MainWindow.cpp
@@ -59,6 +62,16 @@ qt_add_executable(mira-writing
     src/SceneUtils.h
     src/VariationBar.cpp
     src/VariationBar.h
+    src/SpellChecker.cpp
+    src/SpellChecker.h
+    src/SpellHighlighter.cpp
+    src/SpellHighlighter.h
+    src/SpellEditor.cpp
+    src/SpellEditor.h
+    src/SettingsPanel.cpp
+    src/SettingsPanel.h
+    src/SelectionPopup.cpp
+    src/SelectionPopup.h
     src/Theme.h
     resources/icons.qrc
 )
@@ -75,6 +88,7 @@ target_link_libraries(mira-writing PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Svg
+    hunspell
 )
 
 target_compile_definitions(mira-writing PRIVATE

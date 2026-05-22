@@ -23,6 +23,12 @@ class WordCounter;
 class WordCountPanel;
 class RefMenuPanel;
 class ElementsStore;
+class SpellChecker;
+class SpellHighlighter;
+class SpellEditor;
+class SettingsPanel;
+class SelectionPopup;
+class QToolButton;
 
 class MainWindow : public QMainWindow
 {
@@ -49,11 +55,18 @@ private:
     void setFirstLineIndent(bool enabled);
     void setParagraphSpacingBefore(int px);
     void setParagraphSpacingAfter(int px);
+    void setBold(bool enabled);
+    void setItalic(bool enabled);
+    void setUnderline(bool enabled);
+    void setStrikethrough(bool enabled);
+    void syncInlineFormatButtons();
     void setFocusMode(bool enabled);
     void updateFocusedBlock();
     void onAddImageRequested();
     void onNewProjectRequested();
     void onOpenProjectRequested();
+    void onSettingsRequested();
+    void applySpellLanguageFromModel();
     void positionWordCountPanel();
     void positionSidePanels();
     bool confirmDiscardOrSave();
@@ -70,7 +83,7 @@ private:
     void changeSelectedImageAlignment(int alignment);
     void detectScenesForPending();
 
-    QTextEdit *editor;
+    SpellEditor *editor;
     TopToolbar *toolbar;
     ImageOverlay *imageOverlay;
     LeftBar *leftBar;
@@ -85,6 +98,14 @@ private:
     WordCountPanel *wordCountPanel;
     RefMenuPanel *refMenuPanel;
     ElementsStore *elementsStore;
+    SpellChecker *spellChecker;
+    SpellHighlighter *spellHighlighter;
+    SettingsPanel *settingsPanel;
+    SelectionPopup *selectionPopup;
+    QToolButton *selBoldBtn;
+    QToolButton *selItalicBtn;
+    QToolButton *selUnderlineBtn;
+    QToolButton *selStrikeBtn;
     QString projectRoot;
     QString baseWindowTitle;
     QTimer *sceneDetectTimer;

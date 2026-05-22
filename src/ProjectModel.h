@@ -96,6 +96,10 @@ public:
     int lineHeightPercent() const;
     void setLineHeightPercent(int percent);
 
+    // "" = corretor desligado; "pt_BR", "en_US", ... = idioma do dicionário.
+    QString spellLanguage() const;
+    void setSpellLanguage(const QString& code);
+
     void setProjectName(const QString& name);
     void setManuscripts(const QList<Manuscript>& list);
     void setChapters(const QList<Chapter>& list);
