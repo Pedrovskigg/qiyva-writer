@@ -84,6 +84,12 @@ qt_add_executable(mira-writing
     src/EditorLayout.h
     src/ThemesPanel.cpp
     src/ThemesPanel.h
+    src/BackgroundWidget.cpp
+    src/BackgroundWidget.h
+    src/ThemeEditorDialog.cpp
+    src/ThemeEditorDialog.h
+    src/ThemePreviewWidget.cpp
+    src/ThemePreviewWidget.h
     src/ProjectInfoPanel.cpp
     src/ProjectInfoPanel.h
     src/ProjectInfoHover.cpp

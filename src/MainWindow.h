@@ -44,6 +44,7 @@ class GlossaryStore;
 class GlossaryPanel;
 class GlossaryAddPopup;
 class MainMenuDialog;
+class BackgroundWidget;
 class QToolButton;
 
 class MainWindow : public QMainWindow
@@ -91,6 +92,7 @@ private:
     void applyEditorLayout();
     void resizeEditorColumnToViewport();
     void applyPageShadow();
+    void applyBackgroundFromTheme();
     void applySpellLanguageFromModel();
     void positionWordCountPanel();
     void positionSidePanels();
@@ -165,6 +167,7 @@ private:
     GlossaryPanel *glossaryPanel = nullptr;
     GlossaryAddPopup *glossaryAddPopup = nullptr;
     MainMenuDialog *mainMenuDialog = nullptr;
+    BackgroundWidget *backgroundWidget = nullptr;
     QString markerEditId; // GUID em edição (vazio = aplicar novo)
     QString markerHoverId; // GUID hover atual (pra evitar reabrir)
     int markerPendingStart = -1; // seleção capturada antes do popup abrir

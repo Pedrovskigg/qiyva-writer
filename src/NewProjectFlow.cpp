@@ -368,8 +368,7 @@ NewProjectFolderDialog::NewProjectFolderDialog(const QString& projectName, QWidg
     root->addWidget(title);
 
     auto* sub = new QLabel(
-        tr("Escolha a pasta onde <b>%1</b> será criada. Se quiser, use o botão ao lado para navegar.")
-            .arg(m_safeName.toHtmlEscaped()),
+        tr("Escolha o local onde será criada a pasta do seu projeto, os arquivos referente a ele serão salvos dentro dela. Use o botão abaixo para navegar."),
         this);
     sub->setObjectName(QStringLiteral("npSub"));
     sub->setWordWrap(true);

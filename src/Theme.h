@@ -6,6 +6,16 @@
 
 namespace Theme {
 
+// Modos de exibição da imagem de fundo da janela. Espelham FocusWriter mas
+// sem "Centered" puro fora do centro — sempre centralizado quando aplica.
+enum BackgroundMode {
+    BgCenter  = 0, // desenha no centro sem redimensionar (pode sobrar/cortar)
+    BgTile    = 1, // repete cobrindo toda a janela
+    BgStretch = 2, // estica ignorando proporção
+    BgFit     = 3, // ajusta mantendo proporção (KeepAspectRatio)
+    BgZoom    = 4, // amplia mantendo proporção (KeepAspectRatioByExpanding)
+};
+
 // Bundle de propriedades visuais de um tema. Cores em #rrggbb ou rgba(...).
 // Layout da página (largura/margens) NÃO é responsabilidade do tema — fica
 // em EditorLayout.
@@ -66,6 +76,18 @@ struct MiraTheme {
     QString pageShadowColor = QStringLiteral("rgba(0,0,0,140)");
     int pageShadowRadius = 24;
     int pageShadowOffset = 6;
+
+    // Imagem de fundo da janela. Quando backgroundImage está vazio, o app
+    // pinta normalmente; caso contrário, MainWindow desenha a imagem antes
+    // dos painéis. Path absoluto, modo segue BackgroundMode.
+    QString backgroundImage;
+    // Default = Preencher: imagens devem sempre cobrir a tela toda. Outros modos
+    // deixam áreas sem imagem ou cortam mal em janelas grandes.
+    int backgroundMode = BgZoom;
+
+    // Opacidade da página do editor (0–100). 100 = totalmente opaca (default).
+    // Valores menores deixam a imagem de fundo aparecer atrás da página.
+    int editorOpacity = 100;
 };
 
 // Singleton observável. Quem precisa reagir a troca de tema deve conectar
@@ -79,17 +101,33 @@ public:
     const QList<MiraTheme>& available() const;
     void setCurrent(const QString& id);
 
+    // Custom themes — bibliotecas separadas, salvas em QSettings.
+    // Visíveis em uma coluna própria no ThemesPanel.
+    QList<MiraTheme> bundledThemes() const;
+    QList<MiraTheme> customThemes() const;
+    bool isCustom(const QString& id) const;
+
+    // Adiciona ou substitui um custom (match por id). Retorna o id final.
+    // Se for novo, gera id "custom-<n>" único.
+    QString upsertCustom(const MiraTheme& theme);
+    bool removeCustom(const QString& id);
+    QString uniqueCustomId(const QString& base = QStringLiteral("custom")) const;
+
 signals:
     void themeChanged();
+    void customThemesChanged();
 
 private:
     Manager();
     void loadBundled();
     void loadFromSettings();
     void saveToSettings() const;
+    void loadCustomThemes();
+    void saveCustomThemes() const;
 
-    QList<MiraTheme> m_themes;
+    QList<MiraTheme> m_themes;        // bundled + custom (custom no fim)
     int m_currentIndex = 0;
+    int m_bundledCount = 0;           // bundled ocupam [0, m_bundledCount)
 };
 
 // API legada — chamadas existentes (`Theme::appBackground()` etc.) seguem
@@ -134,6 +172,11 @@ bool pageShadowEnabled();
 QString pageShadowColor();
 int pageShadowRadius();
 int pageShadowOffset();
+
+// Imagem de fundo + opacidade da página.
+QString backgroundImage();
+int backgroundMode();
+int editorOpacity();
 
 // Stylesheet global do app — substitui o bloco hard-coded que vivia no main.cpp.
 // Tem QMenu, QScrollBar, TopToolbar, FontPickerPopup, ImageInsertDialog,

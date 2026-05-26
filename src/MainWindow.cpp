@@ -81,6 +81,7 @@
 #include "SpellEditor.h"
 #include "SpellHighlighter.h"
 #include "ThemesPanel.h"
+#include "BackgroundWidget.h"
 #include "WordCountPanel.h"
 #include "WordCounter.h"
 #include "Theme.h"
@@ -187,6 +188,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setupEditor();
     setupToolbar();
+    applyBackgroundFromTheme();
     applyEditorStyle();
     applyPageShadow();
 
@@ -616,6 +618,13 @@ void MainWindow::setupEditor()
     container->setObjectName(QStringLiteral("editorContainer"));
     editorContainer = container;
     container->setStyleSheet(QStringLiteral("#editorContainer { background: %1; }").arg(Theme::appBackground()));
+
+    // Background pintado atrás de tudo (cobre o container quando o tema tem imagem).
+    backgroundWidget = new BackgroundWidget(container);
+    backgroundWidget->setGeometry(container->rect());
+    backgroundWidget->lower();
+    backgroundWidget->hide(); // só ativa quando o tema atual tem imagem
+
     auto *layout = new QHBoxLayout(container);
     layout->setContentsMargins(10, 10, 10, 10);
     layout->setSpacing(10);
@@ -1398,15 +1407,24 @@ void MainWindow::applyEditorStyle()
     // padrão do QTextEdit/viewport. NÃO setamos `color` aqui: o focus mode
     // depende de mexer em QPalette::Text pra fazer o dim dos blocos não focados,
     // e CSS-color sobrepõe palette, quebrando o efeito.
+    const int opacity = qBound(0, Theme::editorOpacity(), 100);
+    const QColor baseBg = QColor(Theme::editorBackground());
+    QColor pageBg = baseBg;
+    pageBg.setAlpha((opacity * 255) / 100);
+    const QString pageBgCss = QStringLiteral("rgba(%1,%2,%3,%4)")
+        .arg(pageBg.red()).arg(pageBg.green()).arg(pageBg.blue())
+        .arg(QString::number(pageBg.alphaF(), 'f', 3));
     editor->setStyleSheet(QStringLiteral(
         "QTextEdit { background-color: %1; selection-background-color: %2; }")
-        .arg(Theme::editorBackground(),
-             Theme::accentDefault()));
+        .arg(pageBgCss, Theme::accentDefault()));
     if (editor->viewport()) {
-        editor->viewport()->setAutoFillBackground(true);
+        // Viewport precisa ser transparente pro QSS (com alpha) aparecer;
+        // se autoFillBackground=true, ele pinta a cor opaca por baixo.
+        const bool wantTranslucent = opacity < 100;
+        editor->viewport()->setAutoFillBackground(!wantTranslucent);
         QPalette vp = editor->viewport()->palette();
-        vp.setColor(QPalette::Base, QColor(Theme::editorBackground()));
-        vp.setColor(QPalette::Window, QColor(Theme::editorBackground()));
+        vp.setColor(QPalette::Base, wantTranslucent ? Qt::transparent : baseBg);
+        vp.setColor(QPalette::Window, wantTranslucent ? Qt::transparent : baseBg);
         editor->viewport()->setPalette(vp);
     }
 
@@ -2349,6 +2367,10 @@ void MainWindow::positionSidePanels()
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
+    if (backgroundWidget && editorContainer) {
+        backgroundWidget->setGeometry(editorContainer->rect());
+        backgroundWidget->lower();
+    }
     resizeEditorColumnToViewport();
     positionWordCountPanel();
     positionSidePanels();
@@ -2429,14 +2451,7 @@ void MainWindow::onThemeChanged()
         a->setStyleSheet(Theme::globalStyleSheet());
     }
 
-    if (editorContainer) {
-        editorContainer->setStyleSheet(
-            QStringLiteral("#editorContainer { background: %1; }").arg(Theme::appBackground()));
-    }
-    if (toolbarHolder) {
-        toolbarHolder->setStyleSheet(
-            QStringLiteral("#topToolbarHolder { background: %1; }").arg(Theme::appBackground()));
-    }
+    applyBackgroundFromTheme();
 
     applyEditorStyle();
     applyPageShadow();
@@ -2511,6 +2526,37 @@ void MainWindow::applyPageShadow()
         effect->setColor(parseColor(Theme::pageShadowColor()));
     } else {
         editorColumn->setGraphicsEffect(nullptr);
+    }
+}
+
+void MainWindow::applyBackgroundFromTheme()
+{
+    if (!editorContainer) return;
+    const QString img = Theme::backgroundImage();
+    const int mode = Theme::backgroundMode();
+    const bool hasImage = !img.isEmpty();
+
+    if (backgroundWidget) {
+        backgroundWidget->setBackground(hasImage ? img : QString(), mode);
+        backgroundWidget->setFillColor(QColor(Theme::appBackground()));
+        backgroundWidget->setGeometry(editorContainer->rect());
+        backgroundWidget->setVisible(hasImage);
+        backgroundWidget->lower();
+    }
+
+    // Quando há imagem: deixa o container transparente pra a imagem aparecer.
+    // Sem imagem: cor sólida normal (comportamento antigo).
+    if (hasImage) {
+        editorContainer->setStyleSheet(
+            QStringLiteral("#editorContainer { background: transparent; }"));
+    } else {
+        editorContainer->setStyleSheet(
+            QStringLiteral("#editorContainer { background: %1; }").arg(Theme::appBackground()));
+    }
+    if (toolbarHolder) {
+        toolbarHolder->setStyleSheet(
+            QStringLiteral("#topToolbarHolder { background: %1; }")
+                .arg(hasImage ? QStringLiteral("transparent") : Theme::appBackground()));
     }
 }
 
