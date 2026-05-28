@@ -1,5 +1,6 @@
 #include "LousaPanel.h"
 
+#include "CardItem.h"
 #include "IconUtils.h"
 #include "LousaScene.h"
 #include "LousaView.h"
@@ -19,6 +20,7 @@
 #include <QResizeEvent>
 #include <QSaveFile>
 #include <QToolButton>
+#include <QUuid>
 #include <QVBoxLayout>
 
 namespace {
@@ -78,8 +80,9 @@ void LousaPanel::buildUi()
     tl->setContentsMargins(10, 0, 10, 0);
     tl->setSpacing(4);
 
-    // Grupo 1 — tipos de card (desabilitados; habilitados conforme cada grupo)
+    // Grupo 1 — tipos de card
     auto* btnNote = makeIconBtn(tr("Post-it"),    m_toolbar);
+    btnNote->setEnabled(true);
     auto* btnCmt  = makeIconBtn(tr("Comentário"), m_toolbar);
     auto* btnImg  = makeIconBtn(tr("Imagem"),     m_toolbar);
     auto* btnDoc  = makeIconBtn(tr("Documento"),  m_toolbar);
@@ -89,6 +92,12 @@ void LousaPanel::buildUi()
     tl->addWidget(btnImg);
     tl->addWidget(btnDoc);
     tl->addWidget(btnChar);
+
+    connect(btnNote, &QToolButton::clicked, this, [this]() {
+        if (!m_scene) return;
+        m_scene->addCard(nextCardData(QStringLiteral("note")));
+        refreshEmptyState();
+    });
 
     m_iconBindings.append({btnNote, QStringLiteral(":/icons/canvasicons/newpost-it.svg")});
     m_iconBindings.append({btnCmt,  QStringLiteral(":/icons/canvasicons/new-comment.svg")});
@@ -155,6 +164,7 @@ void LousaPanel::buildUi()
         if (m_zoomLabel) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(z * 100)));
         save();
     });
+    connect(m_scene, &LousaScene::cardDataChanged, this, [this]() { save(); });
 
     // ── Placeholder ──────────────────────────────────────────────────────
     m_emptyLabel = new QLabel(tr("Clique em + para adicionar um card à lousa"), this);
@@ -204,6 +214,39 @@ void LousaPanel::setProjectRoot(const QString& root)
     load();
 }
 
+static CanvasCard cardFromJson(const QJsonObject& o)
+{
+    CanvasCard c;
+    c.id      = o.value(QStringLiteral("id")).toString();
+    c.type    = o.value(QStringLiteral("type")).toString(QStringLiteral("note"));
+    c.x       = o.value(QStringLiteral("x")).toDouble();
+    c.y       = o.value(QStringLiteral("y")).toDouble();
+    c.width   = o.value(QStringLiteral("width")).toDouble(200);
+    c.height  = o.value(QStringLiteral("height")).toDouble(160);
+    c.content = o.value(QStringLiteral("content")).toString();
+    c.color   = QColor(o.value(QStringLiteral("color")).toString(QStringLiteral("#ffd060")));
+    if (!c.color.isValid()) c.color = QColor(QStringLiteral("#ffd060"));
+    c.linkedItemId    = o.value(QStringLiteral("linkedItemId")).toString();
+    c.linkedDrawerKey = o.value(QStringLiteral("linkedDrawerName")).toString();
+    return c;
+}
+
+static QJsonObject cardToJson(const CanvasCard& c)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("id"),              c.id);
+    o.insert(QStringLiteral("type"),            c.type);
+    o.insert(QStringLiteral("x"),               c.x);
+    o.insert(QStringLiteral("y"),               c.y);
+    o.insert(QStringLiteral("width"),           c.width);
+    o.insert(QStringLiteral("height"),          c.height);
+    o.insert(QStringLiteral("content"),         c.content);
+    o.insert(QStringLiteral("color"),           c.color.name());
+    o.insert(QStringLiteral("linkedItemId"),    c.linkedItemId);
+    o.insert(QStringLiteral("linkedDrawerName"), c.linkedDrawerKey);
+    return o;
+}
+
 void LousaPanel::load()
 {
     if (m_projectRoot.isEmpty() || !m_scene || !m_view) return;
@@ -223,18 +266,29 @@ void LousaPanel::load()
     const qreal panY = root.value(QStringLiteral("panY")).toDouble(0.0);
     m_view->applyZoomAndPan(zoom, panX, panY);
     if (m_zoomLabel) m_zoomLabel->setText(QStringLiteral("%1%").arg(qRound(zoom * 100)));
+
+    m_scene->clearCards();
+    for (const auto& v : root.value(QStringLiteral("cards")).toArray()) {
+        const CanvasCard c = cardFromJson(v.toObject());
+        if (!c.id.isEmpty()) m_scene->addCard(c);
+    }
+    refreshEmptyState();
 }
 
 void LousaPanel::save() const
 {
     if (m_projectRoot.isEmpty() || !m_scene || !m_view) return;
 
+    QJsonArray cards;
+    for (const CanvasCard& c : m_scene->allCardData())
+        cards.append(cardToJson(c));
+
     QJsonObject root;
     root.insert(QStringLiteral("canvasColor"), m_scene->canvasColor().name());
     root.insert(QStringLiteral("zoom"), m_view->zoomFactor());
     root.insert(QStringLiteral("panX"), m_view->scrollPos().x());
     root.insert(QStringLiteral("panY"), m_view->scrollPos().y());
-    root.insert(QStringLiteral("cards"),       QJsonArray{});
+    root.insert(QStringLiteral("cards"),       cards);
     root.insert(QStringLiteral("connections"), QJsonArray{});
     root.insert(QStringLiteral("zones"),       QJsonArray{});
 
@@ -242,6 +296,24 @@ void LousaPanel::save() const
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     f.commit();
+}
+
+CanvasCard LousaPanel::nextCardData(const QString& type) const
+{
+    // Posiciona o novo card no centro da viewport.
+    const QPointF center = m_view
+        ? m_view->mapToScene(m_view->viewport()->rect().center())
+        : QPointF(100, 100);
+
+    CanvasCard c;
+    c.id      = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    c.type    = type;
+    c.x       = center.x() - 100;
+    c.y       = center.y() - 80;
+    c.width   = 200;
+    c.height  = 170;
+    c.color   = QColor(QStringLiteral("#ffd060"));
+    return c;
 }
 
 void LousaPanel::reloadIcons()

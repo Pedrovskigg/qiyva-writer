@@ -1,5 +1,7 @@
 #pragma once
 
+#include "LousaTypes.h"
+
 #include <QList>
 #include <QPair>
 #include <QString>
@@ -37,6 +39,7 @@ private:
     void save() const;
     void load();
     void updateColorBtn();
+    CanvasCard nextCardData(const QString& type) const;
 
     QList<QPair<QToolButton*, QString>> m_iconBindings;
 
