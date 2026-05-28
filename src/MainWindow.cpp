@@ -78,6 +78,7 @@
 #include "GlossaryAddPopup.h"
 #include "GlossaryPanel.h"
 #include "GlossaryStore.h"
+#include "LousaPanel.h"
 #include "RemindersPanel.h"
 #include "RemindersStore.h"
 #include "MarkerHoverPopup.h"
@@ -1274,6 +1275,26 @@ void MainWindow::setupEditor()
             projectInfoPanel->raise();
             projectInfoPanel->activateWindow();
             leftBar->setActiveFixedAction(LeftBar::Info);
+        } else if (action == LeftBar::Whiteboard) {
+            if (!lousaPanel) {
+                lousaPanel = new LousaPanel(editorContainer);
+                connect(lousaPanel, &LousaPanel::closeRequested, this, [this]() {
+                    lousaPanel->hide();
+                    leftBar->clearSelection();
+                });
+                if (!projectRoot.isEmpty())
+                    lousaPanel->setProjectRoot(projectRoot);
+                lousaPanel->hide();
+            }
+            if (lousaPanel->isVisible()) {
+                lousaPanel->hide();
+                leftBar->clearSelection();
+            } else {
+                lousaPanel->setGeometry(editorContainer->rect());
+                lousaPanel->show();
+                lousaPanel->raise();
+                leftBar->setActiveFixedAction(LeftBar::Whiteboard);
+            }
         } else if (action == LeftBar::Consistency) {
             manuscriptPanel->closePanel();
             if (drawerListPanel->isConsistencyMode() && drawerListPanel->isPanelOpen()) {
@@ -2760,6 +2781,8 @@ void MainWindow::applyProjectRoot(const QString& root)
         glossaryStore->load();
         if (spellChecker) spellChecker->setGlossaryWords(glossaryStore->terms());
     }
+    if (lousaPanel) lousaPanel->setProjectRoot(root);
+
     if (remindersStore) {
         remindersStore->setProjectRoot(root);
         remindersStore->load();
@@ -3344,6 +3367,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     positionExternalScrollBar();
     positionFindBar();
     positionGlobalSearchPanel();
+    if (lousaPanel && lousaPanel->isVisible()) lousaPanel->setGeometry(editorContainer->rect());
     if (m_reminderToast && m_reminderToast->isVisible()) positionReminderToast();
     if (readModeEnabled) positionReadModeHotzones();
     if (toolbar && editor) {

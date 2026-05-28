@@ -55,6 +55,7 @@ class MainMenuDialog;
 class BackgroundWidget;
 class RemindersStore;
 class RemindersPanel;
+class LousaPanel;
 class AutoNavHint;
 class QToolButton;
 class FindBar;
@@ -202,6 +203,7 @@ private:
     RemindersStore *remindersStore = nullptr;
     RemindersPanel *remindersPanel = nullptr;
     QTimer *m_reminderPollTimer = nullptr;
+    LousaPanel *lousaPanel = nullptr;
     QFrame  *m_reminderToast      = nullptr;
     QLabel  *m_reminderToastTitle = nullptr;
     QLabel  *m_reminderToastBody  = nullptr;
