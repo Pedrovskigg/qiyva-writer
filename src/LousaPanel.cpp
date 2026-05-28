@@ -2,6 +2,7 @@
 
 #include "CardItem.h"
 #include "ConnectionItem.h"
+#include "ElementsStore.h"
 #include "IconUtils.h"
 #include "ProjectModel.h"
 #include "LousaScene.h"
@@ -10,6 +11,7 @@
 
 #include <QBuffer>
 #include <QCloseEvent>
+#include <QInputDialog>
 #include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -193,29 +195,27 @@ void LousaPanel::buildUi()
     // ── Character picker ─────────────────────────────────────────────────────
     connect(btnChar, &QToolButton::clicked, this, [this]() {
         if (!m_scene || !m_projectModel) return;
-        struct CEntry { QString drawerKey, drawerName, itemId, title, photo; };
+        struct CEntry { QString drawerKey, drawerName, itemId, title, elementId, html; };
         QVector<CEntry> entries;
+        // Coleta personagens das gavetas de tipo character
         for (const Drawer& d : m_projectModel->drawers()) {
-            if (d.drawerElementType != QStringLiteral("character")) continue;
-            for (const DrawerItem& it : d.items)
-                entries.append({d.key, d.title, it.id, it.title, it.role}); // role = photo url
+            const bool isChar = (d.drawerElementType == QStringLiteral("character"));
+            for (const DrawerItem& it : d.items) {
+                if (!isChar && it.elementType != QStringLiteral("character")) continue;
+                entries.append({d.key, d.title, it.id, it.title, it.elementId, it.html});
+            }
         }
-        // Fallback: all items with elementType=character
-        if (entries.isEmpty()) {
-            for (const Drawer& d : m_projectModel->drawers())
-                for (const DrawerItem& it : d.items)
-                    if (it.elementType == QStringLiteral("character"))
-                        entries.append({d.key, d.title, it.id, it.title, it.role});
-        }
-        if (entries.isEmpty()) return;
 
         QDialog dlg(this);
-        dlg.setWindowTitle(tr("Adicionar personagem"));
-        dlg.resize(380, 320);
+        dlg.setWindowTitle(tr("Personagem na lousa"));
+        dlg.resize(400, 360);
         auto* vl = new QVBoxLayout(&dlg);
+        vl->setSpacing(8);
+
         auto* search = new QLineEdit(&dlg);
         search->setPlaceholderText(tr("Buscar personagem..."));
         vl->addWidget(search);
+
         auto* list = new QListWidget(&dlg);
         auto populate = [&](const QString& q) {
             list->clear();
@@ -228,23 +228,67 @@ void LousaPanel::buildUi()
             }
         };
         populate(QString());
-        connect(search, &QLineEdit::textChanged, list, [&](const QString& t) { populate(t); });
+        connect(search, &QLineEdit::textChanged, this, [&](const QString& t) { populate(t); });
         connect(list, &QListWidget::itemDoubleClicked, &dlg, &QDialog::accept);
         vl->addWidget(list, 1);
+
+        // Botão "Novo personagem" + Ok/Cancel
         auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        auto* newCharBtn = new QPushButton(tr("+ Novo personagem"), &dlg);
+        newCharBtn->setCursor(Qt::PointingHandCursor);
+        bb->addButton(newCharBtn, QDialogButtonBox::ResetRole);
+
         connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        // "Novo personagem" — pede nome e cria diretamente no primeiro drawer de character
+        bool createdNew = false;
+        connect(newCharBtn, &QPushButton::clicked, this, [&]() {
+            const QString name = QInputDialog::getText(
+                &dlg, tr("Novo personagem"), tr("Nome:"));
+            if (name.trimmed().isEmpty()) return;
+            // Encontra o primeiro drawer de personagens
+            QString targetDrawerKey;
+            for (const Drawer& d : m_projectModel->drawers()) {
+                if (d.drawerElementType == QStringLiteral("character")) {
+                    targetDrawerKey = d.key; break;
+                }
+            }
+            if (targetDrawerKey.isEmpty()) return; // Sem gaveta de personagens
+            DrawerItem newItem;
+            newItem.id          = ProjectModel::uid();
+            newItem.title       = name.trimmed();
+            newItem.elementType = QStringLiteral("character");
+            newItem.elementIcon = QStringLiteral("user");
+            m_projectModel->addDrawerItem(targetDrawerKey, newItem);
+            // Adiciona à lista e seleciona
+            entries.append({targetDrawerKey, QString(), newItem.id, newItem.title, QString(), QString()});
+            populate(QString());
+            createdNew = true;
+            // Seleciona o novo item no final da lista
+            if (list->count() > 0) list->setCurrentRow(list->count() - 1);
+        });
+
         vl->addWidget(bb);
         if (dlg.exec() != QDialog::Accepted || !list->currentItem()) return;
 
         const int idx = list->currentItem()->data(Qt::UserRole).toInt();
         if (idx < 0 || idx >= entries.size()) return;
         const CEntry& e = entries[idx];
+
+        // Busca a foto do personagem via ElementsStore (Element::image = data URL)
+        QString photoDataUrl;
+        if (m_elementsStore && !e.elementId.isEmpty()) {
+            if (const Element* el = m_elementsStore->findElement(e.elementId))
+                photoDataUrl = el->image; // data:image/jpeg;base64,...
+        }
+
         CanvasCard c = nextCardData(QStringLiteral("character"));
         c.title           = e.title;
         c.linkedDrawerKey = e.drawerKey;
         c.linkedItemId    = e.itemId;
-        c.photoDataUrl    = e.photo; // base64 da foto do personagem
+        c.photoDataUrl    = photoDataUrl;
+        c.content         = e.html; // HTML do doc do personagem (para overlay no double-click)
         m_scene->addCard(c);
         refreshEmptyState();
     });
@@ -442,10 +486,8 @@ void LousaPanel::closeEvent(QCloseEvent* event)
     emit closeRequested();
 }
 
-void LousaPanel::setProjectModel(ProjectModel* model)
-{
-    m_projectModel = model;
-}
+void LousaPanel::setProjectModel(ProjectModel* model) { m_projectModel = model; }
+void LousaPanel::setElementsStore(ElementsStore* store) { m_elementsStore = store; }
 
 void LousaPanel::refreshDocCards()
 {

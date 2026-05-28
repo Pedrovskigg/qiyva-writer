@@ -1282,6 +1282,7 @@ void MainWindow::setupEditor()
                     leftBar->clearSelection();
                 });
                 lousaPanel->setProjectModel(projectModel);
+                lousaPanel->setElementsStore(elementsStore);
                 if (!projectRoot.isEmpty())
                     lousaPanel->setProjectRoot(projectRoot);
             }
@@ -2780,7 +2781,11 @@ void MainWindow::applyProjectRoot(const QString& root)
         glossaryStore->load();
         if (spellChecker) spellChecker->setGlossaryWords(glossaryStore->terms());
     }
-    if (lousaPanel) { lousaPanel->setProjectModel(projectModel); lousaPanel->setProjectRoot(root); }
+    if (lousaPanel) {
+        lousaPanel->setProjectModel(projectModel);
+        lousaPanel->setElementsStore(elementsStore);
+        lousaPanel->setProjectRoot(root);
+    }
 
     if (remindersStore) {
         remindersStore->setProjectRoot(root);

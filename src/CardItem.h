@@ -61,6 +61,7 @@ private:
     bool   isOnDocBtn(const QPointF& p) const;
     bool   isOnResizeZone(const QPointF& p) const;
     void   showColorMenu(const QPoint& screenPos);
+    void   loadCharacterPhoto();  // carrega m_pixmap da data URL do personagem
     void   openImagePicker();
     void   loadPixmapFromContent();
     void   updateTextItem();

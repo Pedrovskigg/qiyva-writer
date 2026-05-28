@@ -21,6 +21,7 @@ public:
 
     void setProjectRoot(const QString& root);
     void setProjectModel(class ProjectModel* model);
+    void setElementsStore(class ElementsStore* store);
     void refreshDocCards();
     void refreshEmptyState();
 
@@ -52,6 +53,7 @@ private:
     QLabel*      m_emptyLabel   = nullptr;
     QLabel*      m_zoomLabel    = nullptr;
 
-    QString        m_projectRoot;
-    class ProjectModel* m_projectModel = nullptr;
+    QString             m_projectRoot;
+    class ProjectModel* m_projectModel  = nullptr;
+    class ElementsStore* m_elementsStore = nullptr;
 };

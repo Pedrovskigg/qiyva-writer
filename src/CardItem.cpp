@@ -65,7 +65,8 @@ public:
         // Card de imagem: double-click no texto → fecha a descrição e volta à imagem.
         // (Igual ao Mira 1: <textarea onDoubleClick={() => setShowDesc(false)} />)
         if (auto* card = dynamic_cast<CardItem*>(parentItem())) {
-            if (card->cardData().type == QStringLiteral("image")) {
+            const QString t = card->cardData().type;
+        if (t == QStringLiteral("image") || t == QStringLiteral("character")) {
                 card->toggleImageDesc(false);
                 e->accept();
                 return;
@@ -94,42 +95,57 @@ CardItem::CardItem(const CanvasCard& data, QGraphicsItem* parent)
     setAcceptHoverEvents(true);
     setPos(m_data.x, m_data.y);
 
-    const bool needsTextItem = (m_data.type != QStringLiteral("doc") &&
-                                m_data.type != QStringLiteral("character"));
-    if (needsTextItem) {
+    const bool isImg   = (m_data.type == QStringLiteral("image"));
+    const bool isChar  = (m_data.type == QStringLiteral("character"));
+    const bool isDoc   = (m_data.type == QStringLiteral("doc"));
+
+    // Pixmap: image usa content (base64 puro), character usa photoDataUrl (data URL)
+    if (isImg)  loadPixmapFromContent();
+    if (isChar) loadCharacterPhoto();
+
+    // BodyTextItem para types que têm overlay de texto (image: descrição; character: doc HTML)
+    // Doc: renderizado por paint(), sem BodyTextItem
+    if (!isDoc) {
         auto* bti  = new BodyTextItem(this);
         m_textItem = bti;
-        m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+        // Para image e character o overlay começa escondido
+        m_textItem->setVisible(false);
+
+        if (isImg) {
+            m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+            m_textItem->document()->setPlainText(m_data.description);
+        } else if (isChar) {
+            // Overlay do doc do personagem — rich text, read-only
+            m_textItem->setTextInteractionFlags(Qt::NoTextInteraction);
+            m_textItem->setHtml(m_data.content.isEmpty()
+                ? QStringLiteral("<p style='color:rgba(255,255,255,0.55)'><em>Doc vazio</em></p>")
+                : m_data.content);
+        } else {
+            m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+            m_textItem->document()->setPlainText(m_data.content);
+        }
         m_textItem->setAcceptHoverEvents(false);
-        const QString initialText = (m_data.type == QStringLiteral("image"))
-            ? m_data.description : m_data.content;
-        m_textItem->document()->setPlainText(initialText);
+
         QTextOption opt;
         opt.setAlignment(Qt::AlignLeft);
         opt.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
         m_textItem->document()->setDefaultTextOption(opt);
         m_textItem->document()->setDocumentMargin(0);
+
         updateTextItem();
         applyTextColor();
 
-        if (m_data.type == QStringLiteral("image")) {
-            loadPixmapFromContent();
-            m_textItem->setVisible(false);
+        // Só a textarea de imagem propaga edições para m_data
+        if (isImg) {
             connect(m_textItem->document(), &QTextDocument::contentsChanged, this, [this]() {
                 m_data.description = m_textItem->document()->toPlainText();
                 emit dataChanged(m_data);
             });
-        } else {
+        } else if (!isChar) {
             connect(m_textItem->document(), &QTextDocument::contentsChanged, this, [this]() {
                 m_data.content = m_textItem->document()->toPlainText();
                 emit dataChanged(m_data);
             });
-        }
-    } else {
-        // doc / character: sem BodyTextItem — conteúdo renderizado pelo paint()
-        if (m_data.type == QStringLiteral("character") && !m_data.photoDataUrl.isEmpty()) {
-            const QByteArray ba = QByteArray::fromBase64(m_data.photoDataUrl.toLatin1());
-            m_pixmap.loadFromData(ba);
         }
     }
 }
@@ -147,7 +163,8 @@ void CardItem::syncFromData()
 {
     setPos(m_data.x, m_data.y);
     prepareGeometryChange();
-    if (m_data.type == QStringLiteral("image")) loadPixmapFromContent();
+    if (m_data.type == QStringLiteral("image"))     loadPixmapFromContent();
+    if (m_data.type == QStringLiteral("character")) loadCharacterPhoto();
     updateTextItem();
     applyTextColor();
     update();
@@ -176,10 +193,11 @@ QPainterPath CardItem::shape() const
 void CardItem::updateTextItem()
 {
     if (!m_textItem) return;
-    const bool isImg = (m_data.type == QStringLiteral("image"));
-    // Imagem: área de texto começa abaixo do overlay do header (34px) e cobre o card
+    const bool isImg  = (m_data.type == QStringLiteral("image"));
+    const bool isChar = (m_data.type == QStringLiteral("character"));
+    // Imagem e personagem: overlay cobre o card inteiro (começa em y=0, não precisa de header)
     const qreal padL   = 10.0;
-    const qreal padTop = isImg ? 34.0 : (kHeaderH + 4.0);
+    const qreal padTop = (isImg || isChar) ? 34.0 : (kHeaderH + 4.0);
     const qreal padBot = 17.0;
     const qreal tw = qMax(10.0, m_data.width - 2.0 * padL);
     const qreal th = qMax(10.0, m_data.height - padTop - padBot);
@@ -224,6 +242,19 @@ void CardItem::setLinkedHtml(const QString& html)
 {
     m_data.content = html;
     update();
+}
+
+void CardItem::loadCharacterPhoto()
+{
+    // photoDataUrl pode ser data URL completo ("data:image/...;base64,<b64>")
+    // ou base64 puro. Ambos suportados.
+    const QString& url = m_data.photoDataUrl;
+    if (url.isEmpty()) { m_pixmap = QPixmap(); return; }
+    const int comma = url.indexOf(QLatin1Char(','));
+    const QByteArray ba = (comma >= 0)
+        ? QByteArray::fromBase64(url.mid(comma + 1).toLatin1())
+        : QByteArray::fromBase64(url.toLatin1());
+    m_pixmap.loadFromData(ba);
 }
 
 void CardItem::loadPixmapFromContent()
@@ -442,10 +473,11 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
         p->setPen(QPen(accent, 3)); p->setBrush(Qt::NoBrush);
         p->drawLine(QPointF(kRadius,1.5), QPointF(w-kRadius,1.5));
 
-        // Foto ou iniciais
+        // Foto ou iniciais (dimmed quando overlay de doc aberto)
         p->save();
         QPainterPath clip; clip.addRoundedRect(QRectF(0,0,w,h), 10, 10);
         p->setClipPath(clip);
+        p->setOpacity(m_showDesc ? 0.41 : 1.0);
         if (!m_pixmap.isNull()) {
             const qreal iw=m_pixmap.width(), ih=m_pixmap.height();
             const qreal scale=qMax(w/iw, h/ih);
@@ -884,7 +916,7 @@ void CardItem::hoverLeaveEvent(QGraphicsSceneHoverEvent*)
 
 void CardItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e)
 {
-    if (m_data.type == QStringLiteral("image")) {
+    if (m_data.type == QStringLiteral("image") || m_data.type == QStringLiteral("character")) {
         toggleImageDesc(!m_showDesc);
         e->accept();
         return;
