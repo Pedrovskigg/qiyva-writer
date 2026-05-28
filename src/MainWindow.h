@@ -217,6 +217,7 @@ private:
     QString sceneDetectKey;
     QTimer *m_autoNavTimer = nullptr;
     int m_autoNavDir = 0;
+    bool m_autoNavEnabled = true;
     bool m_autoNavCooldown = false;
     bool m_sliderHeld = false;
     int m_wheelOverscroll = 0;

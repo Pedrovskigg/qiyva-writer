@@ -28,11 +28,15 @@ public:
     void setDetectionEnabled(bool enabled);
     void setDetectionMarkAll(bool markAll);
 
+    bool autoNavEnabled() const;
+    void setAutoNavEnabled(bool enabled);
+
 signals:
     void spellEnabledChanged(bool enabled);
     void spellLanguageChanged(const QString& code);
     void detectionEnabledChanged(bool enabled);
     void detectionMarkAllChanged(bool markAll);
+    void autoNavEnabledChanged(bool enabled);
 
 private:
     void onCheckToggled(bool checked);
@@ -42,8 +46,9 @@ private:
 
     QCheckBox* m_spellCheck;
     QComboBox* m_langCombo;
-    QCheckBox* m_detectionCheck   = nullptr;
+    QCheckBox* m_detectionCheck    = nullptr;
     QCheckBox* m_detectionAllCheck = nullptr;
+    QCheckBox* m_autoNavCheck      = nullptr;
     QSlider* m_pageWidthSlider = nullptr;
     QSlider* m_pageHeightSlider = nullptr;
     QSlider* m_hMarginSlider = nullptr;

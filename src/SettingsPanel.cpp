@@ -163,6 +163,29 @@ SettingsPanel::SettingsPanel(QWidget* parent)
         emit detectionMarkAllChanged(checked);
     });
 
+    // ---- Seção: Navegação ----
+    auto* navGroup = new QGroupBox(tr("Navegação"), this);
+    auto* navLayout = new QVBoxLayout(navGroup);
+    navLayout->setContentsMargins(14, 8, 14, 14);
+    navLayout->setSpacing(8);
+
+    m_autoNavCheck = new QCheckBox(tr("Navegar automaticamente entre capítulos"), navGroup);
+    navLayout->addWidget(m_autoNavCheck);
+
+    auto* navHint = new QLabel(
+        tr("Ao chegar no início ou fim de um capítulo, manter o scroll pressionado "
+           "na borda por 2 segundos avança ou retrocede automaticamente para o próximo."),
+        navGroup);
+    navHint->setObjectName(QStringLiteral("settingsHint"));
+    navHint->setWordWrap(true);
+    navLayout->addWidget(navHint);
+
+    root->addWidget(navGroup);
+
+    connect(m_autoNavCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        emit autoNavEnabledChanged(checked);
+    });
+
     root->addStretch();
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -432,4 +455,14 @@ void SettingsPanel::setDetectionEnabled(bool enabled)
 void SettingsPanel::setDetectionMarkAll(bool markAll)
 {
     if (m_detectionAllCheck) m_detectionAllCheck->setChecked(markAll);
+}
+
+bool SettingsPanel::autoNavEnabled() const
+{
+    return m_autoNavCheck ? m_autoNavCheck->isChecked() : true;
+}
+
+void SettingsPanel::setAutoNavEnabled(bool enabled)
+{
+    if (m_autoNavCheck) m_autoNavCheck->setChecked(enabled);
 }

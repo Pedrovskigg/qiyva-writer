@@ -3074,6 +3074,7 @@ void MainWindow::positionGlobalSearchPanel()
 
 void MainWindow::activateNavZone(int dir, const EditorHost::ViewMode& vm)
 {
+    if (!m_autoNavEnabled) return;
     if (dir == m_autoNavDir) return; // já ativo nesta direção — timer continua
     m_autoNavDir = dir;
     m_autoNavTargetTitle.clear();
@@ -3262,6 +3263,13 @@ void MainWindow::onSettingsRequested()
                 qs.endGroup(); qs.endGroup();
             }
         });
+        connect(settingsPanel, &SettingsPanel::autoNavEnabledChanged, this, [this](bool enabled) {
+            m_autoNavEnabled = enabled;
+            QSettings().setValue(QStringLiteral("editor/autoNavEnabled"), enabled);
+            if (!enabled) deactivateNavZone();
+        });
+        // Lê preferência global (não por projeto)
+        m_autoNavEnabled = QSettings().value(QStringLiteral("editor/autoNavEnabled"), true).toBool();
     }
 
     // Atualiza a UI do painel com o estado atual antes de mostrar.
@@ -3270,6 +3278,7 @@ void MainWindow::onSettingsRequested()
     if (!lang.isEmpty()) settingsPanel->setSpellLanguage(lang);
     settingsPanel->setDetectionEnabled(detectionEnabled);
     settingsPanel->setDetectionMarkAll(detectionMarkAll);
+    settingsPanel->setAutoNavEnabled(m_autoNavEnabled);
 
     settingsPanel->show();
     settingsPanel->raise();
