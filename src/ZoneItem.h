@@ -15,6 +15,8 @@ public:
 
     const CanvasZone& zoneData() const { return m_data; }
     void setZoneData(const CanvasZone& d);
+    void setSelected(bool on);
+    bool isSelected() const { return m_selected; }
 
     QRectF       boundingRect() const override;
     QPainterPath shape()         const override;
@@ -23,6 +25,10 @@ public:
 signals:
     void dataChanged(const CanvasZone& data);
     void removeRequested(const QString& id);
+    void gestureStarted();   // início de mover/redimensionar/recolorir/renomear (p/ undo)
+    void zoneClicked(const QString& id);  // clique na zona (para seleção/export)
+    void dragStartedWithContents(const QString& id, bool withContents);
+    void draggedBy(const QString& id, const QPointF& delta);
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent* e)    override;
@@ -46,6 +52,8 @@ private:
 
     // Interaction state
     bool    m_hovered    = false;
+    bool    m_selected   = false;
+    bool    m_moveContents = false;   // arrastando com Ctrl+Shift (move conteúdo junto)
     bool    m_dragging   = false;
     bool    m_resizing   = false;
     int     m_resizeHandle = -1;

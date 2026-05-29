@@ -54,6 +54,13 @@ void ZoneItem::setZoneData(const CanvasZone& d)
     update();
 }
 
+void ZoneItem::setSelected(bool on)
+{
+    if (m_selected == on) return;
+    m_selected = on;
+    update();
+}
+
 // ─── Geometria ───────────────────────────────────────────────────────────────
 
 QRectF ZoneItem::boundingRect() const
@@ -96,6 +103,13 @@ void ZoneItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
     p->setPen(dashedPen);
     p->setBrush(Qt::NoBrush);
     p->drawRoundedRect(QRectF(0, 0, w, h), kRadius, kRadius);
+
+    // Realce de seleção (para exportar): contorno sólido azul.
+    if (m_selected) {
+        p->setPen(QPen(QColor(QStringLiteral("#6ea8fe")), 2.5));
+        p->setBrush(Qt::NoBrush);
+        p->drawRoundedRect(QRectF(-2, -2, w + 4, h + 4), kRadius + 2, kRadius + 2);
+    }
 
     // ── Título centralizado (grande, 45% opacity) ──────────────────────────
     if (!m_data.title.isEmpty()) {
@@ -188,6 +202,9 @@ void ZoneItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     if (e->button() != Qt::LeftButton) { e->ignore(); return; }
     const QPointF lp = e->pos();
 
+    // Qualquer clique na zona a seleciona (para exportar).
+    emit zoneClicked(m_data.id);
+
     if (isOnDelete(lp)) {
         emit removeRequested(m_data.id);
         e->accept(); return;
@@ -195,6 +212,7 @@ void ZoneItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     if (isOnColorDot(lp)) {
         QColor nc = QColorDialog::getColor(m_data.color, nullptr, tr("Cor da área"));
         if (nc.isValid()) {
+            emit gestureStarted();
             m_data.color = nc;
             update();
             emitData();
@@ -203,6 +221,7 @@ void ZoneItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     }
     const int hi = handleAt(lp);
     if (m_hovered && hi >= 0) {
+        emit gestureStarted();
         m_resizing     = true;
         m_resizeHandle = hi;
         m_pressScene   = e->scenePos();
@@ -212,9 +231,13 @@ void ZoneItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
         e->accept(); return;
     }
     if (isOnGrip(lp) || lp.y() < kCtrlH) {
+        emit gestureStarted();
+        m_moveContents = (e->modifiers() & Qt::ControlModifier)
+                      && (e->modifiers() & Qt::ShiftModifier);
         m_dragging     = true;
         m_pressScene   = e->scenePos();
         m_pressOrigin  = pos();
+        emit dragStartedWithContents(m_data.id, m_moveContents);
         setCursor(Qt::ClosedHandCursor);
         e->accept(); return;
     }
@@ -226,6 +249,7 @@ void ZoneItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e)
     if (m_dragging) {
         const QPointF delta = e->scenePos() - m_pressScene;
         setPos(m_pressOrigin + delta);
+        emit draggedBy(m_data.id, delta);
         e->accept(); return;
     }
     if (m_resizing) {
@@ -265,6 +289,7 @@ void ZoneItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e)
         nullptr, tr("Nome da área"), tr("Nome:"),
         QLineEdit::Normal, m_data.title);
     if (!name.isNull()) {
+        emit gestureStarted();
         m_data.title = name.trimmed();
         update();
         emitData();
@@ -294,11 +319,11 @@ void ZoneItem::contextMenuEvent(QGraphicsSceneContextMenuEvent* e)
         const QString name = QInputDialog::getText(
             nullptr, tr("Nome da área"), tr("Nome:"),
             QLineEdit::Normal, m_data.title);
-        if (!name.isNull()) { m_data.title = name.trimmed(); update(); emitData(); }
+        if (!name.isNull()) { emit gestureStarted(); m_data.title = name.trimmed(); update(); emitData(); }
     });
     menu.addAction(tr("Cor..."), this, [this]() {
         QColor nc = QColorDialog::getColor(m_data.color, nullptr, tr("Cor da área"));
-        if (nc.isValid()) { m_data.color = nc; update(); emitData(); }
+        if (nc.isValid()) { emit gestureStarted(); m_data.color = nc; update(); emitData(); }
     });
     menu.addSeparator();
     menu.addAction(tr("Remover área"), this, [this]() { emit removeRequested(m_data.id); });

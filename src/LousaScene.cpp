@@ -6,6 +6,7 @@
 
 #include <QGraphicsLineItem>
 #include <QGraphicsSceneMouseEvent>
+#include <QGuiApplication>
 #include <QPainter>
 #include <QTimer>
 #include <algorithm>
@@ -84,15 +85,26 @@ CardItem* LousaScene::addCard(const CanvasCard& data)
     connect(item, &CardItem::dataChanged,      this, &LousaScene::cardDataChanged);
     connect(item, &CardItem::positionChanged,  this, &LousaScene::onCardPositionChanged);
     connect(item, &CardItem::deleteRequested,  this, [this](const QString& id) {
+        emit undoSnapshotRequested();
         removeCard(id);
+    });
+    connect(item, &CardItem::stashRequested, this, [this](const QString& id) {
+        if (CardItem* c = findCard(id)) {
+            emit undoSnapshotRequested();
+            emit cardStashRequested(c->cardData());
+            removeCard(id);
+        }
     });
     connect(item, &CardItem::pinDragStarted, this,
             [this](const QString& fromId, const QPointF& pinScene) {
         startPinDrag(fromId, pinScene);
     });
     connect(item, &CardItem::cardPressed, this, [this, item]() {
-        selectOnlyCard(item);
+        onCardPressedSelect(item);
     });
+    connect(item, &CardItem::gestureStarted, this, &LousaScene::undoSnapshotRequested);
+    connect(item, &CardItem::dragStarted, this, &LousaScene::onCardDragStarted);
+    connect(item, &CardItem::draggedBy,   this, &LousaScene::onCardDraggedBy);
     return item;
 }
 
@@ -106,6 +118,58 @@ void LousaScene::clearCardSelection()
 {
     for (CardItem* c : m_cards)
         c->setCardSelected(false);
+}
+
+void LousaScene::toggleCardSelection(CardItem* c)
+{
+    if (c) c->setCardSelected(!c->isCardSelected());
+}
+
+void LousaScene::addCardToSelection(CardItem* c)
+{
+    if (c && !c->isCardSelected()) c->setCardSelected(true);
+}
+
+QList<CardItem*> LousaScene::selectedCardItems() const
+{
+    QList<CardItem*> out;
+    for (CardItem* c : m_cards)
+        if (c->isCardSelected()) out.append(c);
+    return out;
+}
+
+// Resolve a seleção quando um card é clicado.
+// Shift = alterna esse card; clique normal num card não-selecionado = seleciona só ele;
+// clique num card já selecionado = mantém a seleção (permite arrastar o grupo).
+void LousaScene::onCardPressedSelect(CardItem* item)
+{
+    if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier)
+        toggleCardSelection(item);
+    else if (!item->isCardSelected())
+        selectOnlyCard(item);
+}
+
+void LousaScene::onCardDragStarted(const QString& id)
+{
+    m_groupOrigins.clear();
+    m_groupLeader.clear();
+    CardItem* leader = findCard(id);
+    if (!leader || !leader->isCardSelected()) return;  // arrastando card avulso
+    const QList<CardItem*> sel = selectedCardItems();
+    if (sel.size() < 2) return;                         // sem grupo
+    m_groupLeader = id;
+    for (CardItem* c : sel)
+        m_groupOrigins.insert(c->cardData().id, c->pos());
+}
+
+void LousaScene::onCardDraggedBy(const QString& id, const QPointF& delta)
+{
+    if (id != m_groupLeader || m_groupOrigins.isEmpty()) return;
+    for (auto it = m_groupOrigins.constBegin(); it != m_groupOrigins.constEnd(); ++it) {
+        if (it.key() == id) continue;  // o líder já se moveu sozinho
+        if (CardItem* c = findCard(it.key()))
+            c->setPos(it.value() + delta);
+    }
 }
 
 void LousaScene::removeCard(const QString& id)
@@ -224,9 +288,56 @@ ZoneItem* LousaScene::addZone(const CanvasZone& data)
         emit zoneDataChanged();
     });
     connect(item, &ZoneItem::removeRequested, this, [this](const QString& id) {
+        emit undoSnapshotRequested();
         removeZone(id);
     });
+    connect(item, &ZoneItem::gestureStarted, this, &LousaScene::undoSnapshotRequested);
+    connect(item, &ZoneItem::zoneClicked, this, &LousaScene::onZoneClicked);
+    connect(item, &ZoneItem::dragStartedWithContents, this, &LousaScene::onZoneDragStartedWithContents);
+    connect(item, &ZoneItem::draggedBy, this, &LousaScene::onZoneDraggedBy);
     return item;
+}
+
+void LousaScene::clearZoneSelection()
+{
+    m_selectedZoneId.clear();
+    for (ZoneItem* z : m_zones) z->setSelected(false);
+}
+
+void LousaScene::onZoneClicked(const QString& id)
+{
+    m_selectedZoneId = id;
+    for (ZoneItem* z : m_zones)
+        z->setSelected(z->zoneData().id == id);
+}
+
+void LousaScene::onZoneDragStartedWithContents(const QString& id, bool withContents)
+{
+    m_zoneContentOrigins.clear();
+    m_zoneDragLeader.clear();
+    if (!withContents) return;
+    // Acha a zona e captura os cards inteiramente dentro dela.
+    ZoneItem* zone = nullptr;
+    for (ZoneItem* z : m_zones) if (z->zoneData().id == id) { zone = z; break; }
+    if (!zone) return;
+    const QPointF zp = zone->pos();
+    const CanvasZone zd = zone->zoneData();
+    const QRectF zr(zp.x(), zp.y(), zd.width, zd.height);
+    m_zoneDragLeader = id;
+    for (CardItem* c : m_cards) {
+        const CanvasCard d = c->cardData();
+        const QRectF cr(d.x, d.y, d.width, d.height);
+        if (zr.contains(cr))
+            m_zoneContentOrigins.insert(d.id, c->pos());
+    }
+}
+
+void LousaScene::onZoneDraggedBy(const QString& id, const QPointF& delta)
+{
+    if (id != m_zoneDragLeader || m_zoneContentOrigins.isEmpty()) return;
+    for (auto it = m_zoneContentOrigins.constBegin(); it != m_zoneContentOrigins.constEnd(); ++it)
+        if (CardItem* c = findCard(it.key()))
+            c->setPos(it.value() + delta);
 }
 
 void LousaScene::removeZone(const QString& id)

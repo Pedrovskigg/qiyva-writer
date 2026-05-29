@@ -24,6 +24,7 @@
 #include <QGraphicsTextItem>
 #include <QGraphicsView>
 #include <QImage>
+#include <QInputDialog>
 #include <QRadialGradient>
 #include <QRegularExpression>
 #include <QStyleOption>
@@ -828,6 +829,19 @@ void CardItem::paintScrollbar(QPainter* p, qreal top, qreal visH,
     p->restore();
 }
 
+void CardItem::paintSelectionRing(QPainter* p) const
+{
+    // Contorno azul + glow para cards selecionados (igual Mira 1: 2px #6ea8fe + glow).
+    const qreal w = m_data.width, h = m_data.height;
+    p->save();
+    p->setBrush(Qt::NoBrush);
+    p->setPen(QPen(QColor(110, 168, 254, 60), 6));
+    p->drawRoundedRect(QRectF(-1, -1, w + 2, h + 2), kRadius + 1, kRadius + 1);
+    p->setPen(QPen(QColor(QStringLiteral("#6ea8fe")), 2));
+    p->drawRoundedRect(QRectF(-1, -1, w + 2, h + 2), kRadius + 1, kRadius + 1);
+    p->restore();
+}
+
 // ── Pintura ────────────────────────────────────────────────────────────────
 
 void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
@@ -859,6 +873,11 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
 
         // Controles flutuantes (só quando selecionado)
         if (m_selected) {
+            // Contorno azul ao redor do conteúdo (igual Mira 1: outline 2px offset 4)
+            p->setBrush(Qt::NoBrush);
+            p->setPen(QPen(QColor(QStringLiteral("#6ea8fe")), 2));
+            p->drawRoundedRect(cb.adjusted(-4, -4, 4, 4), 4, 4);
+
             QRectF del, color, sym;
             controlRects(del, color, sym);
             auto pill = [&](const QRectF& r) {
@@ -989,6 +1008,7 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
             if (scrollRegion(visH, contentH))
                 paintScrollbar(p, 34.0, visH, contentH, QColor(255, 255, 255, 150));
         }
+        if (m_selected) paintSelectionRing(p);
         return;
     }
 
@@ -1063,6 +1083,7 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
         p->setPen(QPen(accentColor.darker(140), 2));
         p->setBrush(pg); p->setOpacity(0.55);
         p->drawEllipse(QPointF(px,py), pr, pr); p->setOpacity(1.0);
+        if (m_selected) paintSelectionRing(p);
         return;
     }
 
@@ -1155,6 +1176,7 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
         pg.setColorAt(0, accent.lighter(130)); pg.setColorAt(1, accent.darker(160));
         p->setPen(QPen(accent.darker(140),2)); p->setBrush(pg);
         p->setOpacity(0.55); p->drawEllipse(QPointF(px,py),pr,pr); p->setOpacity(1.0);
+        if (m_selected) paintSelectionRing(p);
         return;
     }
 
@@ -1226,6 +1248,27 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
     for (int row = 0; row < 3; ++row)
         for (int col = 0; col < 2; ++col)
             p->drawEllipse(QPointF(gx + col*4.5, gy + row*4.5), 1.2, 1.2);
+
+    // Título do card no header (entre o grip e os botões da direita).
+    // Duplo-clique no header abre o editor de título.
+    {
+        const qreal tx = 20.0;
+        const qreal tw = qMax(10.0, w - 58.0 - tx);
+        const QRectF titleRect(tx, 0, tw, kHeaderH);
+        QFontMetricsF fm(QFont(QStringLiteral("Segoe UI"), 9, QFont::Bold));
+        if (m_data.title.trimmed().isEmpty()) {
+            QFont itf(QStringLiteral("Segoe UI"), 9);
+            itf.setItalic(true);
+            p->setFont(itf);
+            p->setPen(QColor(tc.red(), tc.green(), tc.blue(), 90));
+            p->drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft, tr("Sem título"));
+        } else {
+            p->setFont(QFont(QStringLiteral("Segoe UI"), 9, QFont::Bold));
+            p->setPen(tc);
+            p->drawText(titleRect, Qt::AlignVCenter | Qt::AlignLeft,
+                        fm.elidedText(m_data.title, Qt::ElideRight, tw));
+        }
+    }
 
     // Doc+ button (SVG: rect + cruz, igual Mira 1)
     {
@@ -1303,6 +1346,8 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
     p->drawLine(QPointF(ox+2,oy+9), QPointF(ox+9,oy+2));
     p->drawLine(QPointF(ox+5,oy+9), QPointF(ox+9,oy+5));
     p->drawLine(QPointF(ox+8,oy+9), QPointF(ox+9,oy+8));
+
+    if (m_selected) paintSelectionRing(p);
 }
 
 // ── Hit-test ────────────────────────────────────────────────────────────────
@@ -1377,6 +1422,7 @@ void CardItem::showColorMenu(const QPoint& screenPos)
         ? QColorDialog::getColor(m_data.color, nullptr, tr("Cor do card"))
         : QColor(chosen->data().toString());
     if (!nc.isValid()) return;
+    emit gestureStarted();
     prepareGeometryChange();
     m_data.color = nc;
     applyTextColor();
@@ -1394,17 +1440,28 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     const bool wasSelected = m_selected;
     emit cardPressed();
 
+    // Shift+click em cards normais = só alterna a seleção (sem arrastar/agir nos botões).
+    // Exceção: Shift+× precisa chegar ao handler de delete (remoção permanente).
+    // text/symbol mantêm o Shift+drag para rotação.
+    if ((e->modifiers() & Qt::ShiftModifier) && !isTextSymbol()
+        && !isOnDeleteBtn(e->pos())) {
+        e->accept();
+        return;
+    }
+
     // ── text / symbol ──
     if (isTextSymbol()) {
         // Controles só respondem se o card já estava selecionado (visíveis).
         // Alça de rotação (topo-centro) → rotação por ângulo absoluto
         if (wasSelected && tsRotateRect().contains(e->pos())) {
+            emit gestureStarted();
             m_rotating    = true;
             m_rotByHandle = true;
             e->accept(); return;
         }
         // Shift+drag → rotacionar (atalho do Mira 1)
         if (e->modifiers() & Qt::ShiftModifier) {
+            emit gestureStarted();
             m_rotating      = true;
             m_rotByHandle   = false;
             m_rotStartDeg   = m_data.rotation;
@@ -1414,7 +1471,11 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
         if (wasSelected) {
             QRectF del, color, sym;
             controlRects(del, color, sym);
-            if (del.contains(e->pos())) { emit deleteRequested(m_data.id); e->accept(); return; }
+            if (del.contains(e->pos())) {
+                if (e->modifiers() & Qt::ShiftModifier) emit deleteRequested(m_data.id);
+                else                                    emit stashRequested(m_data.id);
+                e->accept(); return;
+            }
             if (color.contains(e->pos())) {
                 const QColor nc = QColorDialog::getColor(
                     m_data.color, nullptr, tr("Cor"));
@@ -1431,12 +1492,15 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
             }
         }
         if (wasSelected && tsResizeRect().contains(e->pos())) {
+            emit gestureStarted();
             m_fontResizing  = true;
             m_pressScene    = e->scenePos();
             m_pressFontSize = effFontSize();
             e->accept(); return;
         }
         // drag
+        emit gestureStarted();
+        emit dragStarted(m_data.id);
         m_dragging        = true;
         m_pressScene      = e->scenePos();
         m_pressItemOrigin = pos();
@@ -1457,25 +1521,39 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     const bool isDarkCard = (m_data.type == QStringLiteral("doc") ||
                              m_data.type == QStringLiteral("character"));
     if (isDarkCard) {
-        if (isOnDeleteBtn(e->pos())) { emit deleteRequested(m_data.id); e->accept(); return; }
+        if (isOnDeleteBtn(e->pos())) {
+            if (e->modifiers() & Qt::ShiftModifier) emit deleteRequested(m_data.id);
+            else                                    emit stashRequested(m_data.id);
+            e->accept(); return;
+        }
         if (isOnResizeZone(e->pos())) {
+            emit gestureStarted();
             m_resizing = true; m_pressScene = e->scenePos();
             m_pressSize = QSizeF(m_data.width, m_data.height);
             e->accept(); return;
         }
+        emit gestureStarted();
+        emit dragStarted(m_data.id);
         m_dragging = true; m_pressScene = e->scenePos(); m_pressItemOrigin = pos();
         setCursor(Qt::ClosedHandCursor); e->accept(); return;
     }
 
     // Imagem: interação própria
     if (m_data.type == QStringLiteral("image")) {
-        if (isOnDeleteBtn(e->pos())) { emit deleteRequested(m_data.id); e->accept(); return; }
+        if (isOnDeleteBtn(e->pos())) {
+            if (e->modifiers() & Qt::ShiftModifier) emit deleteRequested(m_data.id);
+            else                                    emit stashRequested(m_data.id);
+            e->accept(); return;
+        }
         if (isOnResizeZone(e->pos())) {
+            emit gestureStarted();
             m_resizing = true; m_pressScene = e->scenePos();
             m_pressSize = QSizeF(m_data.width, m_data.height);
             e->accept(); return;
         }
         if (!m_showDesc) { // drag de qualquer ponto quando descrição não está aberta
+            emit gestureStarted();
+            emit dragStarted(m_data.id);
             m_dragging = true; m_pressScene = e->scenePos(); m_pressItemOrigin = pos();
             setCursor(Qt::ClosedHandCursor); e->accept(); return;
         }
@@ -1483,7 +1561,8 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     }
 
     if (isOnDeleteBtn(e->pos())) {
-        emit deleteRequested(m_data.id);
+        if (e->modifiers() & Qt::ShiftModifier) emit deleteRequested(m_data.id);
+        else                                    emit stashRequested(m_data.id);
         e->accept();
         return;
     }
@@ -1500,6 +1579,7 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
         return;
     }
     if (isOnResizeZone(e->pos())) {
+        emit gestureStarted();
         m_resizing   = true;
         m_pressScene = e->scenePos();
         m_pressSize  = QSizeF(m_data.width, m_data.height);
@@ -1508,6 +1588,8 @@ void CardItem::mousePressEvent(QGraphicsSceneMouseEvent* e)
     }
     // Drag pelo header
     if (e->pos().y() < kHeaderH) {
+        emit gestureStarted();
+        emit dragStarted(m_data.id);
         m_dragging        = true;
         m_pressScene      = e->scenePos();
         m_pressItemOrigin = pos();
@@ -1559,6 +1641,7 @@ void CardItem::mouseMoveEvent(QGraphicsSceneMouseEvent* e)
     }
     if (m_dragging) {
         setPos(m_pressItemOrigin + (e->scenePos() - m_pressScene));
+        emit draggedBy(m_data.id, e->scenePos() - m_pressScene);
         e->accept();
         return;
     }
@@ -1682,6 +1765,22 @@ void CardItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* e)
             m_data.content = txt;
             applyContentFont();
             refreshContentMetrics();
+            update();
+            emit dataChanged(m_data);
+        }
+        e->accept();
+        return;
+    }
+    // note / comment: duplo-clique no header edita o título do card.
+    if ((m_data.type == QStringLiteral("note") || m_data.type == QStringLiteral("comment"))
+        && e->pos().y() < kHeaderH) {
+        bool ok = false;
+        const QString t = QInputDialog::getText(
+            nullptr, tr("Título do card"), tr("Título:"),
+            QLineEdit::Normal, m_data.title, &ok);
+        if (ok) {
+            emit gestureStarted();
+            m_data.title = t.trimmed();
             update();
             emit dataChanged(m_data);
         }

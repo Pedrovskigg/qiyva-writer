@@ -17,10 +17,15 @@ public:
     QPointF scrollPos()  const;
 
     void applyZoomAndPan(qreal zoom, qreal panX, qreal panY);
+    void fitSceneRect(const QRectF& r);   // ajusta zoom+pan para enquadrar um retângulo
 
     // Plan mode: cursor crosshair, arrastar no canvas cria uma zona.
     void setPlanMode(bool on);
     bool isPlanMode() const { return m_planMode; }
+
+    // Brush select (Shift+S): passar o mouse seleciona os cards tocados.
+    void setBrushMode(bool on);
+    bool isBrushMode() const { return m_brushMode; }
 
 signals:
     void zoomChanged(qreal zoom);
@@ -42,4 +47,7 @@ private:
     bool               m_drawing    = false;
     QPointF            m_drawStart;
     QGraphicsRectItem* m_planGhost  = nullptr;
+
+    // Brush select
+    bool               m_brushMode  = false;
 };

@@ -41,6 +41,21 @@ void LousaView::applyZoomAndPan(qreal zoom, qreal panX, qreal panY)
     verticalScrollBar()->setValue(qRound(panY));
 }
 
+void LousaView::fitSceneRect(const QRectF& r)
+{
+    if (r.width() <= 0 || r.height() <= 0) return;
+    constexpr qreal pad = 80.0;
+    const QRectF target = r.adjusted(-pad, -pad, pad, pad);
+    const qreal sx = viewport()->width()  / target.width();
+    const qreal sy = viewport()->height() / target.height();
+    m_zoom = qBound(0.15, qMin(sx, sy), 4.0);
+    QTransform t;
+    t.scale(m_zoom, m_zoom);
+    setTransform(t);
+    centerOn(r.center());
+    emit zoomChanged(m_zoom);
+}
+
 void LousaView::wheelEvent(QWheelEvent* event)
 {
     // Regra do Mira 1: se o cursor está sobre um card com conteúdo rolável,
@@ -108,8 +123,10 @@ void LousaView::mousePressEvent(QMouseEvent* event)
     const bool isMiddle = (event->button() == Qt::MiddleButton);
     const bool isBgLeft = (event->button() == Qt::LeftButton) && !itemAt(event->pos());
     if (isBgLeft) {
-        if (auto* sc = qobject_cast<LousaScene*>(scene()))
-            sc->clearCardSelection(); // clicar no vazio desseleciona text/symbol
+        if (auto* sc = qobject_cast<LousaScene*>(scene())) {
+            sc->clearCardSelection();  // clicar no vazio desseleciona text/symbol
+            sc->clearZoneSelection();  // e desseleciona a zona
+        }
     }
     if (isMiddle || isBgLeft) {
         m_panning = true;
@@ -121,8 +138,25 @@ void LousaView::mousePressEvent(QMouseEvent* event)
     QGraphicsView::mousePressEvent(event);
 }
 
+void LousaView::setBrushMode(bool on)
+{
+    m_brushMode = on;
+    setCursor(on ? Qt::PointingHandCursor : Qt::ArrowCursor);
+}
+
 void LousaView::mouseMoveEvent(QMouseEvent* event)
 {
+    // Brush select: enquanto Shift+S está segurado, passar o mouse seleciona cards.
+    if (m_brushMode) {
+        for (QGraphicsItem* it = itemAt(event->pos()); it; it = it->parentItem()) {
+            if (auto* card = dynamic_cast<CardItem*>(it)) {
+                if (auto* sc = qobject_cast<LousaScene*>(scene()))
+                    sc->addCardToSelection(card);
+                break;
+            }
+        }
+    }
+
     if (m_drawing && m_planGhost) {
         const QPointF cur = mapToScene(event->pos());
         m_planGhost->setRect(QRectF(m_drawStart, cur).normalized());

@@ -4,7 +4,9 @@
 
 #include <QColor>
 #include <QGraphicsScene>
+#include <QHash>
 #include <QList>
+#include <QPointF>
 #include <QString>
 
 class CardItem;
@@ -31,6 +33,9 @@ public:
     CardItem* findCard(const QString& id) const;
     void      selectOnlyCard(CardItem* sel);   // seleciona um, desseleciona os outros
     void      clearCardSelection();
+    void      toggleCardSelection(CardItem* c);   // shift+click
+    void      addCardToSelection(CardItem* c);    // brush select
+    QList<CardItem*> selectedCardItems() const;
 
     // ── Conexões ─────────────────────────────────────────────────────────────
     ConnectionItem* addConnection(const CanvasConnection& data);
@@ -44,6 +49,8 @@ public:
     void      removeZone(const QString& id);
     void      clearZones();
     QList<CanvasZone> allZoneData() const;
+    void      clearZoneSelection();
+    QString   selectedZoneId() const { return m_selectedZoneId; }
 
     // ── Pin drag (chamado por CardItem) ──────────────────────────────────────
     void startPinDrag(const QString& fromCardId, const QPointF& fromScene);
@@ -58,6 +65,8 @@ signals:
     void connectionDataChanged();
     void zoneDataChanged();
     void pendingConnection(const QString& fromId, const QString& toId);
+    void undoSnapshotRequested();   // um gesto mutável começou — capturar estado p/ undo
+    void cardStashRequested(const CanvasCard& card); // guardar card no stash
 
 protected:
     void drawBackground(QPainter* painter, const QRectF& rect) override;
@@ -67,6 +76,12 @@ protected:
 private slots:
     void onCardPositionChanged(const QString& cardId);
     void onSnapTimerFired();
+    void onCardPressedSelect(CardItem* item);          // resolve seleção (shift = toggle)
+    void onCardDragStarted(const QString& id);          // captura origens do grupo
+    void onCardDraggedBy(const QString& id, const QPointF& delta); // move o grupo
+    void onZoneClicked(const QString& id);              // seleciona zona p/ exportar
+    void onZoneDragStartedWithContents(const QString& id, bool withContents);
+    void onZoneDraggedBy(const QString& id, const QPointF& delta);
 
 private:
     void cancelSnap();
@@ -85,4 +100,13 @@ private:
     QTimer*  m_snapTimer   = nullptr;
     QString  m_snapCardId;
     QString  m_snapConnId;
+
+    // Arrasto de grupo (seleção múltipla)
+    QString               m_groupLeader;
+    QHash<QString, QPointF> m_groupOrigins;
+
+    // Seleção e arrasto-com-conteúdo de zona
+    QString               m_selectedZoneId;
+    QString               m_zoneDragLeader;
+    QHash<QString, QPointF> m_zoneContentOrigins;
 };

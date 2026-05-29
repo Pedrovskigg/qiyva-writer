@@ -57,11 +57,15 @@ public:
 
 signals:
     void dataChanged(const CanvasCard& data);
-    void deleteRequested(const QString& id);
+    void deleteRequested(const QString& id);   // remoção permanente (Shift+×)
+    void stashRequested(const QString& id);    // guarda no stash (× simples)
     void createDocRequested(const QString& id);
     void positionChanged(const QString& id);      // CardItem se moveu na cena
     void pinDragStarted(const QString& fromId, const QPointF& pinScenePos);
     void cardPressed();                            // qualquer clique no card (para seleção)
+    void gestureStarted();                         // início de um gesto mutável (drag/resize/rot)
+    void dragStarted(const QString& id);           // começou a arrastar este card
+    void draggedBy(const QString& id, const QPointF& deltaScene); // delta acumulado do arrasto
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent* e)       override;
@@ -90,6 +94,7 @@ private:
     bool   scrollRegion(qreal& visH, qreal& contentH) const; // métricas de scroll do tipo atual
     void   paintScrollbar(QPainter* p, qreal top, qreal visH,
                           qreal contentH, const QColor& thumb) const;
+    void   paintSelectionRing(QPainter* p) const; // contorno azul quando selecionado (não-text/symbol)
     // text / symbol
     bool   isTextSymbol() const;
     int    effFontSize() const;          // fontSize com fallback por tipo
