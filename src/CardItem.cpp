@@ -4,6 +4,7 @@
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QImage>
+#include <QRegularExpression>
 #include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneHoverEvent>
 #include <QGraphicsSceneMouseEvent>
@@ -76,6 +77,18 @@ public:
     }
 };
 
+// Injeta width="maxPx" em todas as <img> para que QTextDocument respeite
+// o limite da coluna e não renderize imagens no tamanho original.
+QString htmlWithScaledImages(const QString& html, int maxPx)
+{
+    if (html.isEmpty() || maxPx <= 0) return html;
+    static const QRegularExpression kImgRe(
+        QStringLiteral("<img\\b"), QRegularExpression::CaseInsensitiveOption);
+    QString out = html;
+    out.replace(kImgRe, QStringLiteral("<img width=\"%1\"").arg(maxPx));
+    return out;
+}
+
 bool calcIsDark(const QColor& c)
 {
     return (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000 < 128;
@@ -117,9 +130,12 @@ CardItem::CardItem(const CanvasCard& data, QGraphicsItem* parent)
         } else if (isChar) {
             // Overlay do doc do personagem — rich text, read-only
             m_textItem->setTextInteractionFlags(Qt::NoTextInteraction);
-            m_textItem->setHtml(m_data.content.isEmpty()
+            // Limita largura das imagens ao card (padL=10 de cada lado)
+            const int maxImgW = qMax(10, qRound(m_data.width - 20.0));
+            const QString charHtml = m_data.content.isEmpty()
                 ? QStringLiteral("<p style='color:rgba(255,255,255,0.55)'><em>Doc vazio</em></p>")
-                : m_data.content);
+                : htmlWithScaledImages(m_data.content, maxImgW);
+            m_textItem->setHtml(charHtml);
         } else {
             m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
             m_textItem->document()->setPlainText(m_data.content);
@@ -429,7 +445,7 @@ void CardItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*)
             QTextDocument doc;
             doc.setDefaultFont(QFont(QStringLiteral("Segoe UI"), 9));
             doc.setTextWidth(w - 18);
-            doc.setHtml(m_data.content);
+            doc.setHtml(htmlWithScaledImages(m_data.content, qRound(w - 20)));
             p->save();
             p->setClipRect(QRectF(0, kDocContentY, w, h - kDocContentY - 6));
             p->setPen(QColor(255,255,255,217));
