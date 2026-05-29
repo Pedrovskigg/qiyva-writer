@@ -2,6 +2,7 @@
 
 #include "CardItem.h"
 #include "ConnectionItem.h"
+#include "ElementCreateDialog.h"
 #include "ElementsStore.h"
 #include "IconUtils.h"
 #include "ProjectModel.h"
@@ -12,6 +13,7 @@
 #include <QBuffer>
 #include <QCloseEvent>
 #include <QInputDialog>
+#include <QMessageBox>
 #include <QColorDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -241,12 +243,8 @@ void LousaPanel::buildUi()
         connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
-        // "Novo personagem" — pede nome e cria diretamente no primeiro drawer de character
-        bool createdNew = false;
+        // "Novo personagem" — abre o ElementCreateDialog completo (role, foto, narrador)
         connect(newCharBtn, &QPushButton::clicked, this, [&]() {
-            const QString name = QInputDialog::getText(
-                &dlg, tr("Novo personagem"), tr("Nome:"));
-            if (name.trimmed().isEmpty()) return;
             // Encontra o primeiro drawer de personagens
             QString targetDrawerKey;
             for (const Drawer& d : m_projectModel->drawers()) {
@@ -254,19 +252,48 @@ void LousaPanel::buildUi()
                     targetDrawerKey = d.key; break;
                 }
             }
-            if (targetDrawerKey.isEmpty()) return; // Sem gaveta de personagens
+            if (targetDrawerKey.isEmpty()) {
+                QMessageBox::information(&dlg, tr("Sem gaveta de personagens"),
+                    tr("Crie primeiro uma gaveta de personagens no projeto."));
+                return;
+            }
+
+            // Abre o dialog completo com foto, papel, narrador
+            ElementCreateDialog edlg(QStringLiteral("character"), &dlg);
+            if (edlg.exec() != QDialog::Accepted || edlg.title().trimmed().isEmpty()) return;
+
+            // Cria elemento no ElementsStore
+            Element elem;
+            elem.name     = edlg.title().trimmed();
+            elem.type     = QStringLiteral("character");
+            elem.icon     = QStringLiteral("user");
+            elem.role     = edlg.role();
+            elem.image    = edlg.imageDataUrl();
+            elem.narrator = edlg.narrator();
+            const QString elementId = m_elementsStore ? m_elementsStore->addElement(elem) : QString();
+
+            // Cria DrawerItem vinculado ao elemento
             DrawerItem newItem;
-            newItem.id          = ProjectModel::uid();
-            newItem.title       = name.trimmed();
-            newItem.elementType = QStringLiteral("character");
-            newItem.elementIcon = QStringLiteral("user");
+            newItem.id           = ProjectModel::uid();
+            newItem.title        = elem.name;
+            newItem.hasInlineHtml = true;
+            newItem.html         = QStringLiteral("<p></p>");
+            newItem.elementType  = QStringLiteral("character");
+            newItem.elementId    = elementId;
+            newItem.role         = elem.role;
             m_projectModel->addDrawerItem(targetDrawerKey, newItem);
-            // Adiciona à lista e seleciona
-            entries.append({targetDrawerKey, QString(), newItem.id, newItem.title, QString(), QString()});
-            populate(QString());
-            createdNew = true;
-            // Seleciona o novo item no final da lista
-            if (list->count() > 0) list->setCurrentRow(list->count() - 1);
+
+            // Cria e adiciona o card direto na lousa
+            CanvasCard c = nextCardData(QStringLiteral("character"));
+            c.title           = elem.name;
+            c.linkedDrawerKey = targetDrawerKey;
+            c.linkedItemId    = newItem.id;
+            c.photoDataUrl    = elem.image;
+            m_scene->addCard(c);
+            refreshEmptyState();
+
+            // Fecha o picker — card já está na lousa
+            dlg.accept();
         });
 
         vl->addWidget(bb);
