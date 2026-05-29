@@ -3,8 +3,11 @@
 #include <QBuffer>
 #include <QColorDialog>
 #include <QFileDialog>
+#include <QGraphicsProxyWidget>
+#include <QTextEdit>
 #include <QImage>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneHoverEvent>
 #include <QGraphicsSceneMouseEvent>
@@ -116,55 +119,69 @@ CardItem::CardItem(const CanvasCard& data, QGraphicsItem* parent)
     if (isImg)  loadPixmapFromContent();
     if (isChar) loadCharacterPhoto();
 
-    // BodyTextItem para types que têm overlay de texto (image: descrição; character: doc HTML)
-    // Doc: renderizado por paint(), sem BodyTextItem
-    if (!isDoc) {
+    if (isImg || isChar) {
+        // Overlay de texto: QGraphicsTextItem (sem scroll, começa escondido)
         auto* bti  = new BodyTextItem(this);
         m_textItem = bti;
-        // Para image e character o overlay começa escondido
         m_textItem->setVisible(false);
+        m_textItem->setAcceptHoverEvents(false);
 
         if (isImg) {
             m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
             m_textItem->document()->setPlainText(m_data.description);
-        } else if (isChar) {
-            // Overlay do doc do personagem — rich text, read-only
+            connect(m_textItem->document(), &QTextDocument::contentsChanged, this, [this]() {
+                m_data.description = m_textItem->document()->toPlainText();
+                emit dataChanged(m_data);
+            });
+        } else { // character
             m_textItem->setTextInteractionFlags(Qt::NoTextInteraction);
-            // Overlay do doc: texto sem imagens (QGraphicsTextItem não renderiza data-URL).
-            // Stripa <img> igual ao Mira 1 para o overlay do card.
             static const QRegularExpression kImgTag(
                 QStringLiteral("<img[^>]*>"), QRegularExpression::CaseInsensitiveOption);
             const QString docHtml = m_data.content.isEmpty()
                 ? QStringLiteral("<p style='color:rgba(255,255,255,0.55)'><em>Doc vazio</em></p>")
                 : QString(m_data.content).remove(kImgTag);
             m_textItem->setHtml(docHtml);
-        } else {
-            m_textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
-            m_textItem->document()->setPlainText(m_data.content);
         }
-        m_textItem->setAcceptHoverEvents(false);
 
         QTextOption opt;
         opt.setAlignment(Qt::AlignLeft);
         opt.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
         m_textItem->document()->setDefaultTextOption(opt);
         m_textItem->document()->setDocumentMargin(0);
-
         updateTextItem();
         applyTextColor();
 
-        // Só a textarea de imagem propaga edições para m_data
-        if (isImg) {
-            connect(m_textItem->document(), &QTextDocument::contentsChanged, this, [this]() {
-                m_data.description = m_textItem->document()->toPlainText();
-                emit dataChanged(m_data);
-            });
-        } else if (!isChar) {
-            connect(m_textItem->document(), &QTextDocument::contentsChanged, this, [this]() {
-                m_data.content = m_textItem->document()->toPlainText();
-                emit dataChanged(m_data);
-            });
-        }
+    } else if (!isDoc) {
+        // note / comment: QTextEdit com scroll via QGraphicsProxyWidget
+        // setPos() funciona corretamente para posicionar filhos de QGraphicsObject.
+        m_textEdit = new QTextEdit();
+        m_textEdit->setFrameStyle(QFrame::NoFrame);
+        m_textEdit->setAcceptRichText(false);
+        m_textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_textEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_textEdit->setAutoFillBackground(false);
+        m_textEdit->viewport()->setAutoFillBackground(false);
+        m_textEdit->setStyleSheet(QStringLiteral(
+            "QTextEdit { background: transparent; border: none; }"));
+        m_textEdit->setPlaceholderText(tr("Escreva aqui..."));
+        m_textEdit->setFont(QFont(QStringLiteral("Segoe UI"), 12));
+        m_textEdit->setPlainText(m_data.content);
+
+        QTextOption opt;
+        opt.setAlignment(Qt::AlignLeft);
+        m_textEdit->document()->setDefaultTextOption(opt);
+        applyTextColor();
+
+        m_proxy = new QGraphicsProxyWidget(this);
+        m_proxy->setWidget(m_textEdit);
+        m_proxy->setZValue(1.0);
+
+        updateTextItem(); // posiciona e dimensiona
+
+        connect(m_textEdit, &QTextEdit::textChanged, this, [this]() {
+            m_data.content = m_textEdit->toPlainText();
+            emit dataChanged(m_data);
+        });
     }
 }
 
@@ -174,6 +191,8 @@ CanvasCard CardItem::cardData() const
     const QPointF p = pos();
     d.x = p.x();
     d.y = p.y();
+    // m_data.content é mantido atualizado via textChanged; só como fallback:
+    if (m_textEdit) d.content = m_textEdit->toPlainText();
     return d;
 }
 
@@ -210,22 +229,27 @@ QPainterPath CardItem::shape() const
 
 void CardItem::updateTextItem()
 {
-    if (!m_textItem) return;
+    constexpr qreal padL = 10.0, padBot = 17.0;
     const bool isImg  = (m_data.type == QStringLiteral("image"));
     const bool isChar = (m_data.type == QStringLiteral("character"));
-    // Imagem e personagem: overlay cobre o card inteiro (começa em y=0, não precisa de header)
-    const qreal padL   = 10.0;
     const qreal padTop = (isImg || isChar) ? 34.0 : (kHeaderH + 4.0);
-    const qreal padBot = 17.0;
-    const qreal tw = qMax(10.0, m_data.width - 2.0 * padL);
+    const qreal tw = qMax(10.0, m_data.width  - 2.0 * padL);
     const qreal th = qMax(10.0, m_data.height - padTop - padBot);
-    if (auto* bti = static_cast<BodyTextItem*>(m_textItem)) {
-        bti->bodyW = tw;
-        bti->bodyH = th;
+
+    if (m_textItem) {
+        // image / character overlay
+        if (auto* bti = static_cast<BodyTextItem*>(m_textItem)) {
+            bti->bodyW = tw;
+            bti->bodyH = th;
+        }
+        m_textItem->setTextWidth(tw);
+        m_textItem->setPos(padL, padTop);
     }
-    m_textItem->setTextWidth(tw);
-    m_textItem->setPos(padL, padTop);
-    // Não reseta o texto aqui — o conteúdo é gerido pelo sinal textChanged.
+    if (m_proxy && m_textEdit) {
+        // note / comment: setPos + widget()->resize() — funciona sem setGeometry()
+        m_proxy->setPos(padL, padTop);
+        m_textEdit->resize(qRound(tw), qRound(th));
+    }
 }
 
 // ── Cores ──────────────────────────────────────────────────────────────────
@@ -249,11 +273,18 @@ QColor CardItem::contrastColor() const
 
 void CardItem::applyTextColor()
 {
-    if (!m_textItem) return;
-    const QColor tc = (m_data.type == QStringLiteral("image"))
+    const QColor tc = (m_data.type == QStringLiteral("image") ||
+                       m_data.type == QStringLiteral("character"))
         ? QColor(255, 255, 255, 220)
         : contrastColor();
-    m_textItem->setDefaultTextColor(tc);
+    if (m_textItem) m_textItem->setDefaultTextColor(tc);
+    if (m_textEdit) {
+        QPalette pal = m_textEdit->palette();
+        pal.setColor(QPalette::Text, tc);
+        pal.setColor(QPalette::PlaceholderText, QColor(tc.red(), tc.green(), tc.blue(), 90));
+        m_textEdit->setPalette(pal);
+        m_textEdit->viewport()->setPalette(pal);
+    }
 }
 
 void CardItem::setLinkedHtml(const QString& html)

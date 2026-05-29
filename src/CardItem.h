@@ -8,6 +8,9 @@
 #include <QPointF>
 #include <QSizeF>
 
+class QGraphicsProxyWidget;
+class QTextEdit;
+
 class QGraphicsTextItem;
 
 class CardItem : public QGraphicsObject
@@ -71,8 +74,12 @@ private:
     QColor contrastColor() const;  // cor de texto sobre bodyColor()
     bool   isDark() const;
 
-    CanvasCard         m_data;
-    QGraphicsTextItem* m_textItem    = nullptr;
+    CanvasCard            m_data;
+    // Para note/comment: proxy com QTextEdit scrollável
+    QGraphicsProxyWidget* m_proxy     = nullptr;
+    QTextEdit*            m_textEdit  = nullptr;
+    // Para image/character: QGraphicsTextItem (overlay, sem scroll)
+    QGraphicsTextItem*    m_textItem  = nullptr;
     QPixmap            m_pixmap;       // image + character photo
     bool               m_showDesc     = false;
     // Snap glow (waypoint snapping)

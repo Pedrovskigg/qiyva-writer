@@ -65,8 +65,15 @@ QRectF ZoneItem::boundingRect() const
 
 QPainterPath ZoneItem::shape() const
 {
+    // Igual ao Mira 1: só os controles e handles são clicáveis.
+    // O corpo da zona tem pointerEvents: none para não bloquear cards.
+    const qreal w = m_data.width, h = m_data.height;
     QPainterPath p;
-    p.addRect(QRectF(0, 0, m_data.width, m_data.height));
+    // Faixa de controles no topo (grip, nome, cor, ×)
+    p.addRect(QRectF(0, 0, w, kCtrlH));
+    // 8 handles de resize (visíveis e clicáveis sempre, não só no hover)
+    for (const HandleDef& hd : kHandles)
+        p.addEllipse(QPointF(hd.rx * w, hd.ry * h), kHandleHit, kHandleHit);
     return p;
 }
 
