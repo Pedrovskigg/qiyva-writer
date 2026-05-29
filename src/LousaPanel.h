@@ -82,6 +82,10 @@ private:
 
     // Exportação de áreas para gavetas
     void exportZones(const QList<CanvasZone>& zones);
+    void exportSelectedZone();   // botão da toolbar: exporta a área selecionada
+
+    // Criar documento a partir de um card (post-it/comentário/imagem)
+    void createDocFromCard(const CanvasCard& c);
 
     QList<QPair<QToolButton*, QString>> m_iconBindings;
 

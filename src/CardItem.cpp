@@ -1852,6 +1852,9 @@ void CardItem::contextMenuEvent(QGraphicsSceneContextMenuEvent* e)
     if (m_data.type == QStringLiteral("image")) {
         QMenu menu;
         menu.addAction(tr("Escolher imagem..."), this, &CardItem::openImagePicker);
+        menu.addAction(tr("Criar documento"), this, [this]() {
+            emit createDocRequested(m_data.id);
+        });
         menu.addSeparator();
         menu.addAction(tr("Remover card"), this, [this]() {
             emit deleteRequested(m_data.id);

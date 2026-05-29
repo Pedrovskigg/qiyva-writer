@@ -95,6 +95,9 @@ CardItem* LousaScene::addCard(const CanvasCard& data)
             removeCard(id);
         }
     });
+    connect(item, &CardItem::createDocRequested, this, [this](const QString& id) {
+        if (CardItem* c = findCard(id)) emit cardCreateDocRequested(c->cardData());
+    });
     connect(item, &CardItem::pinDragStarted, this,
             [this](const QString& fromId, const QPointF& pinScene) {
         startPinDrag(fromId, pinScene);
@@ -293,6 +296,7 @@ ZoneItem* LousaScene::addZone(const CanvasZone& data)
     });
     connect(item, &ZoneItem::gestureStarted, this, &LousaScene::undoSnapshotRequested);
     connect(item, &ZoneItem::zoneClicked, this, &LousaScene::onZoneClicked);
+    connect(item, &ZoneItem::exportRequested, this, &LousaScene::zoneExportRequested);
     connect(item, &ZoneItem::dragStartedWithContents, this, &LousaScene::onZoneDragStartedWithContents);
     connect(item, &ZoneItem::draggedBy, this, &LousaScene::onZoneDraggedBy);
     return item;

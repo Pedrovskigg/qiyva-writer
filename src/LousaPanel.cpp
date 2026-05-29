@@ -15,12 +15,10 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QTimer>
-#include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QCursor>
 #include <QDialog>
-#include <QRadioButton>
 #include <QDialogButtonBox>
 #include <QLineEdit>
 #include <QListWidget>
@@ -398,6 +396,27 @@ void LousaPanel::buildUi()
         if (!on) btnZone->setChecked(false);
     });
 
+    // Exportar área selecionada / todas as áreas
+    auto* btnExportArea = makeIconBtn(tr("Exportar área (Ctrl+D)"), m_toolbar);
+    btnExportArea->setEnabled(true);
+    m_iconBindings.append({btnExportArea, QStringLiteral(":/icons/canvasicons/export-plan-area.svg")});
+    tl->addWidget(btnExportArea);
+    connect(btnExportArea, &QToolButton::clicked, this, &LousaPanel::exportSelectedZone);
+
+    auto* btnExportAll = makeIconBtn(tr("Exportar todas as áreas (Ctrl+Shift+D)"), m_toolbar);
+    btnExportAll->setEnabled(true);
+    m_iconBindings.append({btnExportAll, QStringLiteral(":/icons/canvasicons/export-all-plan-areas.svg")});
+    tl->addWidget(btnExportAll);
+    connect(btnExportAll, &QToolButton::clicked, this, [this]() {
+        if (!m_scene) return;
+        const QList<CanvasZone> all = m_scene->allZoneData();
+        if (all.isEmpty()) {
+            QMessageBox::information(this, tr("Exportar áreas"),
+                tr("Não há áreas na lousa. Crie uma área primeiro."));
+            return;
+        }
+        exportZones(all);
+    });
 
     tl->addStretch(1);
 
@@ -477,6 +496,12 @@ void LousaPanel::buildUi()
         refreshStashList();
         refreshStashBtn();
         save();
+    });
+    connect(m_scene, &LousaScene::cardCreateDocRequested, this,
+            [this](const CanvasCard& c) { createDocFromCard(c); });
+    connect(m_scene, &LousaScene::zoneExportRequested, this, [this](const QString& id) {
+        for (const CanvasZone& z : m_scene->allZoneData())
+            if (z.id == id) { exportZones({z}); break; }
     });
     connect(m_scene, &LousaScene::pendingConnection, this,
             [this](const QString& fromId, const QString& toId) {
@@ -697,28 +722,42 @@ void LousaPanel::exportZones(const QList<CanvasZone>& zones)
     const QList<CanvasCard>       allCards = m_scene->allCardData();
     const QList<CanvasConnection> allConns = m_scene->allConnectionData();
 
+    // Pré-conta: quantas áreas têm conteúdo + se há cards sem título.
     bool hasUntitled = false;
-    int  exportable  = 0;
-    for (const CanvasZone& z : zones)
+    int  totalExportable = 0;
+    int  zonesWithContent = 0;
+    for (const CanvasZone& z : zones) {
+        int n = 0;
         for (const CanvasCard& c : lousaCardsInZone(z, allCards))
             if (c.type == QStringLiteral("note") || c.type == QStringLiteral("comment")) {
-                ++exportable;
+                ++n;
                 if (c.title.trimmed().isEmpty()) hasUntitled = true;
             }
+        if (n > 0) ++zonesWithContent;
+        totalExportable += n;
+    }
 
-    if (exportable == 0) {
+    if (totalExportable == 0) {
         QMessageBox::information(this, tr("Exportar área"),
-            tr("Não há post-its ou comentários dentro da(s) área(s) selecionada(s)."));
+            tr("Não há post-its ou comentários dentro da(s) área(s)."));
         return;
     }
 
-    const QList<Drawer>& drawers = m_projectModel->drawers();
-
+    // Confirmação. Cada área vira uma gaveta própria, com o nome da área.
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Exportar área"));
+    dlg.setWindowTitle(tr("Exportar áreas"));
     dlg.setMinimumWidth(340);
     auto* vl = new QVBoxLayout(&dlg);
     vl->setSpacing(10);
+
+    auto* info = new QLabel(
+        zonesWithContent == 1
+            ? tr("A área será exportada para uma gaveta nova, com o nome da área.")
+            : tr("Cada área vira uma gaveta nova, com o nome da área "
+                 "(%1 áreas → %1 gavetas).").arg(zonesWithContent),
+        &dlg);
+    info->setWordWrap(true);
+    vl->addWidget(info);
 
     if (hasUntitled) {
         auto* warn = new QLabel(tr("Os post-its sem título serão nomeados com as "
@@ -728,78 +767,193 @@ void LousaPanel::exportZones(const QList<CanvasZone>& zones)
         vl->addWidget(warn);
     }
 
-    auto* existingRadio = new QRadioButton(tr("Gaveta existente"), &dlg);
-    auto* newRadio      = new QRadioButton(tr("Nova gaveta"), &dlg);
-    auto* radioRow = new QHBoxLayout;
-    radioRow->addWidget(existingRadio);
-    radioRow->addWidget(newRadio);
-    radioRow->addStretch(1);
-    vl->addLayout(radioRow);
-
-    auto* combo = new QComboBox(&dlg);
-    for (const Drawer& d : drawers)
-        combo->addItem(d.title.isEmpty() ? d.key : d.title, d.key);
-    vl->addWidget(combo);
-
-    auto* nameEdit = new QLineEdit(&dlg);
-    nameEdit->setPlaceholderText(tr("Nome da nova gaveta"));
-    nameEdit->setText(zones.first().title);
-    vl->addWidget(nameEdit);
-
-    const bool hasDrawers = !drawers.isEmpty();
-    existingRadio->setEnabled(hasDrawers);
-    existingRadio->setChecked(hasDrawers);
-    newRadio->setChecked(!hasDrawers);
-    auto syncMode = [&]() {
-        combo->setVisible(existingRadio->isChecked());
-        nameEdit->setVisible(newRadio->isChecked());
-    };
-    connect(existingRadio, &QRadioButton::toggled, &dlg, syncMode);
-    syncMode();
-
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Cancel, &dlg);
-    auto* okBtn = bb->addButton(tr("Exportar"), QDialogButtonBox::AcceptRole);
-    Q_UNUSED(okBtn);
+    bb->addButton(tr("Exportar"), QDialogButtonBox::AcceptRole);
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     vl->addWidget(bb);
 
     if (dlg.exec() != QDialog::Accepted) return;
 
-    QString targetKey;
-    QString targetTitle;
-    if (newRadio->isChecked()) {
-        const QString name = nameEdit->text().trimmed();
-        if (name.isEmpty()) return;
+    // Uma gaveta por área (com conteúdo).
+    int createdDrawers = 0, totalDocs = 0;
+    for (const CanvasZone& z : zones) {
+        QList<CanvasCard> inside;
+        for (const CanvasCard& c : lousaCardsInZone(z, allCards))
+            if (c.type == QStringLiteral("note") || c.type == QStringLiteral("comment"))
+                inside.append(c);
+        if (inside.isEmpty()) continue;
+
         Drawer d;
         d.key   = ProjectModel::uid();
-        d.title = name;
+        d.title = z.title.trimmed().isEmpty() ? tr("Área") : z.title.trimmed();
         m_projectModel->addDrawer(d);
-        targetKey   = d.key;
-        targetTitle = name;
-    } else {
-        if (combo->currentIndex() < 0) return;
-        targetKey   = combo->currentData().toString();
-        targetTitle = combo->currentText();
-    }
+        ++createdDrawers;
 
-    int total = 0;
-    for (const CanvasZone& z : zones) {
-        for (const CanvasCard& c : lousaCardsInZone(z, allCards)) {
-            if (c.type != QStringLiteral("note") && c.type != QStringLiteral("comment"))
-                continue;
+        for (const CanvasCard& c : inside) {
             DrawerItem it;
             it.id            = ProjectModel::uid();
             it.title         = lousaCardTitle(c);
             it.html          = lousaBuildCardHtml(c, allCards, allConns);
             it.hasInlineHtml = true;
-            m_projectModel->addDrawerItem(targetKey, it);
-            ++total;
+            m_projectModel->addDrawerItem(d.key, it);
+            ++totalDocs;
         }
     }
 
-    QMessageBox::information(this, tr("Exportar área"),
-        tr("%1 documento(s) exportado(s) para \"%2\".").arg(total).arg(targetTitle));
+    QMessageBox::information(this, tr("Exportar áreas"),
+        tr("%1 gaveta(s) criada(s) com %2 documento(s).").arg(createdDrawers).arg(totalDocs));
+}
+
+void LousaPanel::exportSelectedZone()
+{
+    if (!m_scene) return;
+    const QString sel = m_scene->selectedZoneId();
+    if (sel.isEmpty()) {
+        QMessageBox::information(this, tr("Exportar área"),
+            tr("Selecione uma área primeiro — clique na barra de topo dela."));
+        return;
+    }
+    for (const CanvasZone& z : m_scene->allZoneData())
+        if (z.id == sel) { exportZones({z}); return; }
+}
+
+// ── Criar documento a partir de um card ──────────────────────────────────────
+
+static QString lousaHtmlFromPlain(const QString& text)
+{
+    const QString normalized = QString(text).replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    const QStringList paras = normalized.split(QRegularExpression(QStringLiteral("\n{2,}")),
+                                               Qt::SkipEmptyParts);
+    QString out;
+    for (const QString& p : paras) {
+        QString chunk = p.trimmed();
+        if (chunk.isEmpty()) continue;
+        chunk = chunk.toHtmlEscaped();
+        chunk.replace(QChar('\n'), QStringLiteral("<br/>"));
+        out += QStringLiteral("<p>%1</p>").arg(chunk);
+    }
+    if (out.isEmpty()) out = QStringLiteral("<p></p>");
+    return out;
+}
+
+void LousaPanel::createDocFromCard(const CanvasCard& c)
+{
+    if (!m_projectModel) return;
+    if (m_projectModel->drawers().isEmpty()) {
+        QMessageBox::warning(this, tr("Criar documento"),
+            tr("Crie uma gaveta antes de usar este recurso."));
+        return;
+    }
+
+    // Título sugerido + corpo do documento conforme o tipo do card.
+    QString suggested = c.title.trimmed();
+    QString bodyHtml;
+    if (c.type == QStringLiteral("image")) {
+        if (!c.content.isEmpty())
+            bodyHtml = QStringLiteral("<p><img src=\"data:image/jpeg;base64,%1\" "
+                                      "style=\"max-width:100%;border-radius:6px;\"/></p>").arg(c.content);
+        bodyHtml += lousaHtmlFromPlain(c.description);
+        if (suggested.isEmpty()) suggested = c.description.trimmed().left(48);
+        if (suggested.isEmpty()) suggested = tr("Imagem");
+    } else {
+        bodyHtml = lousaHtmlFromPlain(c.content);
+        if (suggested.isEmpty()) {
+            QString flat = c.content;
+            flat.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+            flat = flat.trimmed();
+            const QStringList words = flat.split(QChar(' '), Qt::SkipEmptyParts);
+            QStringList picked;
+            for (int i = 0; i < qMin(8, int(words.size())); ++i) picked << words[i];
+            suggested = picked.join(QChar(' '));
+        }
+        if (suggested.isEmpty()) suggested = tr("Documento");
+    }
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Criar documento"));
+    dlg.setMinimumWidth(360);
+    auto* root = new QVBoxLayout(&dlg);
+    root->setContentsMargins(16, 16, 16, 12);
+    root->setSpacing(10);
+
+    root->addWidget(new QLabel(tr("Nome do documento:"), &dlg));
+    auto* nameEdit = new QLineEdit(suggested, &dlg);
+    nameEdit->selectAll();
+    root->addWidget(nameEdit);
+
+    root->addWidget(new QLabel(tr("Gaveta de destino:"), &dlg));
+    auto* combo = new QComboBox(&dlg);
+    for (const Drawer& d : m_projectModel->drawers())
+        combo->addItem(d.title.isEmpty() ? tr("(sem nome)") : d.title, d.key);
+    root->addWidget(combo);
+
+    auto* hint = new QLabel(&dlg);
+    hint->setWordWrap(true);
+    hint->setStyleSheet(QStringLiteral("color:%1;font-size:11px;").arg(Theme::textMuted()));
+    root->addWidget(hint);
+    auto refreshHint = [this, combo, hint]() {
+        const Drawer* d = m_projectModel->findDrawer(combo->currentData().toString());
+        const QString et = d ? d->drawerElementType : QString();
+        if (et == QStringLiteral("character"))    hint->setText(tr("Vai abrir o cadastro de personagem em seguida (foto e papel)."));
+        else if (et == QStringLiteral("setting")) hint->setText(tr("Vai abrir o cadastro de cenário em seguida (foto)."));
+        else if (et == QStringLiteral("object"))  hint->setText(tr("Vai abrir o cadastro de objeto em seguida (foto)."));
+        else hint->clear();
+    };
+    refreshHint();
+    connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), &dlg,
+            [refreshHint](int) { refreshHint(); });
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Cancel, &dlg);
+    bb->addButton(tr("Criar"), QDialogButtonBox::AcceptRole);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    root->addWidget(bb);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    const QString title = nameEdit->text().trimmed();
+    if (title.isEmpty()) return;
+    const QString destKey = combo->currentData().toString();
+    if (destKey.isEmpty()) return;
+
+    const Drawer* destDrawer = m_projectModel->findDrawer(destKey);
+    const QString et = destDrawer ? destDrawer->drawerElementType : QString();
+    const bool isVisual = et == QStringLiteral("character")
+                       || et == QStringLiteral("setting")
+                       || et == QStringLiteral("object");
+
+    if (isVisual) {
+        ElementCreateDialog edlg(et, this);
+        edlg.setInitial(title, QString(), QString());
+        if (edlg.exec() != QDialog::Accepted) return;
+        const QString finalTitle = edlg.title().trimmed();
+        if (finalTitle.isEmpty()) return;
+        Element elem;
+        elem.name  = finalTitle;
+        elem.type  = et;
+        elem.icon  = (et == QStringLiteral("character")) ? QStringLiteral("user")
+                   : (et == QStringLiteral("setting"))   ? QStringLiteral("map")
+                                                         : QStringLiteral("cube");
+        elem.role  = edlg.role();
+        elem.image = edlg.imageDataUrl();
+        const QString elementId = m_elementsStore ? m_elementsStore->addElement(elem) : QString();
+        DrawerItem it;
+        it.id            = ProjectModel::uid();
+        it.title         = finalTitle;
+        it.hasInlineHtml = true;
+        it.html          = bodyHtml;
+        it.elementType   = et;
+        it.elementId     = elementId;
+        it.role          = edlg.role();
+        m_projectModel->addDrawerItem(destKey, it);
+    } else {
+        DrawerItem it;
+        it.id            = ProjectModel::uid();
+        it.title         = title;
+        it.hasInlineHtml = true;
+        it.html          = bodyHtml;
+        m_projectModel->addDrawerItem(destKey, it);
+    }
 }
 
 // ── Stash de cards ───────────────────────────────────────────────────────────
@@ -1242,15 +1396,31 @@ void LousaPanel::keyPressEvent(QKeyEvent* event)
         event->accept(); return;
     }
 
-    // Ctrl+D: exporta a área selecionada; Ctrl+Shift+D: exporta todas.
+    // Ctrl+D: exporta a área selecionada (ou a que está sob o mouse).
+    // Ctrl+Shift+D: exporta todas — cada área para a sua própria gaveta.
     if (ctrl && !alt && key == Qt::Key_D && m_scene) {
         const QList<CanvasZone> all = m_scene->allZoneData();
         if (shift) {
             if (!all.isEmpty()) exportZones(all);
         } else {
+            CanvasZone target;
+            bool found = false;
             const QString sel = m_scene->selectedZoneId();
-            for (const CanvasZone& z : all)
-                if (z.id == sel) { exportZones({z}); break; }
+            if (!sel.isEmpty())
+                for (const CanvasZone& z : all)
+                    if (z.id == sel) { target = z; found = true; break; }
+            // Fallback: a menor área que contém o cursor.
+            if (!found && m_view) {
+                const QPointF sp = m_view->mapToScene(m_view->mapFromGlobal(QCursor::pos()));
+                qreal bestArea = -1.0;
+                for (const CanvasZone& z : all) {
+                    if (QRectF(z.x, z.y, z.width, z.height).contains(sp)) {
+                        const qreal a = z.width * z.height;
+                        if (bestArea < 0 || a < bestArea) { bestArea = a; target = z; found = true; }
+                    }
+                }
+            }
+            if (found) exportZones({target});
         }
         event->accept(); return;
     }

@@ -27,6 +27,7 @@ signals:
     void removeRequested(const QString& id);
     void gestureStarted();   // início de mover/redimensionar/recolorir/renomear (p/ undo)
     void zoneClicked(const QString& id);  // clique na zona (para seleção/export)
+    void exportRequested(const QString& id);  // "Exportar área" no context menu
     void dragStartedWithContents(const QString& id, bool withContents);
     void draggedBy(const QString& id, const QPointF& delta);
 

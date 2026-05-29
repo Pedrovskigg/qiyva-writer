@@ -326,6 +326,8 @@ void ZoneItem::contextMenuEvent(QGraphicsSceneContextMenuEvent* e)
         if (nc.isValid()) { emit gestureStarted(); m_data.color = nc; update(); emitData(); }
     });
     menu.addSeparator();
+    menu.addAction(tr("Exportar área para gaveta"), this, [this]() { emit exportRequested(m_data.id); });
+    menu.addSeparator();
     menu.addAction(tr("Remover área"), this, [this]() { emit removeRequested(m_data.id); });
     menu.exec(e->screenPos());
 }
