@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QList>
 #include <QPair>
+#include <QPointF>
 #include <QSet>
 
 class TimelineEventItem;
@@ -16,7 +17,7 @@ class QTimer;
 class TimelineScene : public QGraphicsScene {
     Q_OBJECT
 public:
-    enum class ViewMode { Rail, Constellation };
+    enum class ViewMode { Rail, Constellation, Spiral };
     enum class AxisMode { Narrative, Story };
 
     explicit TimelineScene(QObject* parent = nullptr);
@@ -31,7 +32,10 @@ public:
     // ── Timelines ────────────────────────────────────────────────────────────
     void setTimelines(const QList<TimelineDef>& timelines);
     const QList<TimelineDef>& timelines() const { return m_timelines; }
-    QColor timelineColor(const QString& timelineId) const;
+    QColor  timelineColor(const QString& timelineId) const;
+    QString timelineWeight(const QString& timelineId) const;
+    QString timelineName(const QString& timelineId) const;
+    bool    isCharacterTimeline(const QString& timelineId) const;
 
     // ── Eventos ──────────────────────────────────────────────────────────────
     TimelineEventItem* addEvent(const TimelineEvent& data);
@@ -72,10 +76,12 @@ signals:
     void canvasDoubleClicked(const QPointF& scenePos);
     void exportEventAsDoc(TimelineEvent data);
     void focusChanged(); // foco mudou (clique/limpeza) → toolbar revalida
+    void editTimelineRequested(const QString& timelineId); // clique-direito na faixa
 
 protected:
     void drawBackground(QPainter* painter, const QRectF& rect) override;
     void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)  override;
+    void contextMenuEvent(QGraphicsSceneContextMenuEvent* event) override;
 
 private slots:
     void onEventPositionChanged(const QString& id);
@@ -94,6 +100,8 @@ private:
     void startSim();          // (re)aquece e roda a simulação
     void stopSim();           // congela, persiste e salva
     void seedConstellation(); // posições iniciais espalhadas
+    void buildSpiralTargets(); // alvo de cada evento: anel=importância, ângulo=tempo
+    void seedSpiral();         // posições iniciais perto dos alvos (a sim assenta)
     void buildEdges();        // backbone sequencial por trilho
     QHash<QString, int> orderMap() const;
 
@@ -119,4 +127,5 @@ private:
     QString m_pinnedId;             // nó preso pelo arraste do usuário
     QList<QPair<QString, QString>> m_seqEdges; // backbone sequencial (desenhado)
     QHash<QString, int> m_ageRank;  // posição (anel) de cada evento na sua linha
+    QHash<QString, QPointF> m_spiralTarget; // alvo de cada evento (Modo Espiral)
 };

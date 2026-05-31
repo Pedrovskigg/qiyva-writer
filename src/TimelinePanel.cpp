@@ -119,8 +119,9 @@ void TimelinePanel::buildUi()
 
     tl->addWidget(makeSep(m_toolbar));
 
-    m_btnView = makeBtn(QString(), tr("Alternar entre Trilho e Ramificações"), m_toolbar);
-    m_btnAxis = makeBtn(QString(), tr("Alternar entre ordem de Narrativa e tempo da História"), m_toolbar);
+    m_btnView = makeBtn(QString(), tr("Alternar entre Trilho, Ramificações e Espiral"), m_toolbar);
+    m_btnAxis = makeBtn(QString(), tr("Narrativa: presença dos personagens por cena  ·  "
+                                      "História: eventos do enredo"), m_toolbar);
     tl->addWidget(m_btnView);
     tl->addWidget(m_btnAxis);
 
@@ -183,6 +184,7 @@ void TimelinePanel::buildUi()
     connect(m_scene, &TimelineScene::eventEditRequested, this, &TimelinePanel::openEditPopup);
     connect(m_scene, &TimelineScene::exportEventAsDoc,   this, &TimelinePanel::onExportEventAsDoc);
     connect(m_scene, &TimelineScene::focusChanged, this, &TimelinePanel::refreshFocusButtons);
+    connect(m_scene, &TimelineScene::editTimelineRequested, this, &TimelinePanel::editTimeline);
     // clique no fundo (sem arrastar): foca a faixa clicada ou limpa o foco
     connect(m_view, &TimelineView::bgClicked, this,
             [this](const QPointF& scenePos, Qt::KeyboardModifiers mods) {
@@ -198,10 +200,14 @@ void TimelinePanel::buildUi()
 void TimelinePanel::toggleViewMode()
 {
     if (!m_scene) return;
-    const bool rail = (m_scene->viewMode() == TimelineScene::ViewMode::Rail);
-    m_scene->setViewMode(rail ? TimelineScene::ViewMode::Constellation
-                              : TimelineScene::ViewMode::Rail);
-    if (rail == false && m_view) m_view->scrollToRailStart(); // entrou no Trilho
+    using VM = TimelineScene::ViewMode;
+    const VM cur  = m_scene->viewMode();
+    const VM next = (cur == VM::Rail)          ? VM::Constellation
+                  : (cur == VM::Constellation) ? VM::Spiral
+                                               : VM::Rail;
+    m_scene->setViewMode(next);
+    if      (next == VM::Rail   && m_view) m_view->scrollToRailStart();
+    else if (next == VM::Spiral && m_view) m_view->fitAll(); // enquadra a espiral
     refreshModeButtons();
     save();
 }
@@ -219,9 +225,12 @@ void TimelinePanel::toggleAxisMode()
 void TimelinePanel::refreshModeButtons()
 {
     if (!m_scene) return;
-    if (m_btnView)
-        m_btnView->setText(m_scene->viewMode() == TimelineScene::ViewMode::Rail
-                               ? tr("Trilho") : tr("Ramificações"));
+    if (m_btnView) {
+        const auto vm = m_scene->viewMode();
+        m_btnView->setText(vm == TimelineScene::ViewMode::Rail          ? tr("Trilho")
+                         : vm == TimelineScene::ViewMode::Constellation ? tr("Ramificações")
+                                                                        : tr("Espiral"));
+    }
     if (m_btnAxis)
         m_btnAxis->setText(m_scene->axisMode() == TimelineScene::AxisMode::Narrative
                                ? tr("Narrativa") : tr("História"));
@@ -291,12 +300,12 @@ void TimelinePanel::refreshFocusButtons()
                                : tr("%1 saltos").arg(d));
 }
 
-void TimelinePanel::createTimeline()
+bool TimelinePanel::editTimelineDef(TimelineDef& def, bool isNew)
 {
-    // Popup rápido: nome + cor
+    // Popup: nome + cor + importância
     auto* dlg = new QDialog(this, Qt::Dialog);
-    dlg->setWindowTitle(tr("Nova linha do tempo"));
-    dlg->setMinimumWidth(300);
+    dlg->setWindowTitle(isNew ? tr("Nova linha do tempo") : tr("Editar linha do tempo"));
+    dlg->setMinimumWidth(320);
 
     auto* layout = new QVBoxLayout(dlg);
     layout->setSpacing(10);
@@ -305,11 +314,21 @@ void TimelinePanel::createTimeline()
     auto* form = new QFormLayout;
     auto* nameEdit = new QLineEdit(dlg);
     nameEdit->setPlaceholderText(tr("Nome da timeline"));
+    nameEdit->setText(def.name);
     form->addRow(tr("Nome:"), nameEdit);
+
+    // Importância: controla espessura do trilho e tamanho das bolinhas
+    auto* impCombo = new QComboBox(dlg);
+    impCombo->addItem(tr("Principal"),             QString::fromLatin1(TimelineWeight::Primary));
+    impCombo->addItem(tr("Secundária"),            QString::fromLatin1(TimelineWeight::Secondary));
+    impCombo->addItem(tr("Backstory / Flashback"), QString::fromLatin1(TimelineWeight::Backstory));
+    const int impIdx = impCombo->findData(def.weight);
+    impCombo->setCurrentIndex(impIdx < 0 ? 1 : impIdx); // default: secundária
+    form->addRow(tr("Importância:"), impCombo);
     layout->addLayout(form);
 
     // Seletor de cor
-    QColor chosenColor = QColor(QStringLiteral("#6c8ebf"));
+    QColor chosenColor = def.color.isValid() ? def.color : QColor(QStringLiteral("#6c8ebf"));
     auto* colorRow = new QHBoxLayout;
     auto* colorBtn = new QToolButton(dlg);
     colorBtn->setObjectName(QStringLiteral("tlPopupSmallBtn"));
@@ -331,7 +350,7 @@ void TimelinePanel::createTimeline()
     layout->addLayout(colorRow);
 
     auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dlg);
-    btns->button(QDialogButtonBox::Ok)->setText(tr("Criar"));
+    btns->button(QDialogButtonBox::Ok)->setText(isNew ? tr("Criar") : tr("Salvar"));
     btns->button(QDialogButtonBox::Cancel)->setText(tr("Cancelar"));
     connect(btns, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
     connect(btns, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
@@ -339,24 +358,50 @@ void TimelinePanel::createTimeline()
 
     dlg->setStyleSheet(styleSheet());
 
-    if (dlg->exec() != QDialog::Accepted) { dlg->deleteLater(); return; }
+    const bool ok = (dlg->exec() == QDialog::Accepted);
+    if (ok) {
+        const QString name = nameEdit->text().trimmed();
+        if (!name.isEmpty()) def.name = name;          // edição: nome vazio mantém o atual
+        def.color  = chosenColor;
+        def.weight = impCombo->currentData().toString();
+    }
+    dlg->deleteLater();
+    return ok && !def.name.isEmpty();
+}
 
-    const QString name = nameEdit->text().trimmed();
-    if (name.isEmpty()) { dlg->deleteLater(); return; }
-
+void TimelinePanel::createTimeline()
+{
     TimelineDef t;
     t.id        = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    t.name      = name;
-    t.color     = chosenColor;
+    t.color     = QColor(QStringLiteral("#6c8ebf"));
     t.kind      = QStringLiteral("custom");
+    t.weight    = QString::fromLatin1(TimelineWeight::Secondary);
     t.railOrder = m_timelines.size();
+
+    if (!editTimelineDef(t, /*isNew=*/true)) return; // cancelado ou nome vazio
+
     m_timelines.append(t);
     m_scene->setTimelines(m_timelines);
     m_scene->relayout();
     rebuildFocusMenu();
     refreshFocusButtons();
     save();
-    dlg->deleteLater();
+}
+
+void TimelinePanel::editTimeline(const QString& id)
+{
+    for (int i = 0; i < m_timelines.size(); ++i) {
+        if (m_timelines[i].id != id) continue;
+        TimelineDef t = m_timelines[i];
+        if (!editTimelineDef(t, /*isNew=*/false)) return;
+        m_timelines[i] = t;
+        m_scene->setTimelines(m_timelines); // repropaga cor/peso e redesenha
+        m_scene->relayout();
+        rebuildFocusMenu();
+        refreshFocusButtons();
+        save();
+        return;
+    }
 }
 
 void TimelinePanel::createEventAt(const QPointF& scenePos)
@@ -529,11 +574,11 @@ QColor colorForId(const QString& id)
 void TimelinePanel::syncCharacterTimelines(bool askSecondary)
 {
     if (!m_elementsStore || !m_projectModel || !m_scene) return;
+    if (!m_presenceProvider) return; // sem análise de presença → nada a fazer
 
-    // ── 1. Ordem de leitura dos capítulos → docKey "ch:ms:chId" ───────────────
-    struct ChapInfo { int index; QString label; QString marker; };
-    QHash<QString, ChapInfo> chapByKey;
-    QList<QString> chapKeysInOrder;
+    // ── 1. Capítulos em ordem de leitura → mapas por chapterId ────────────────
+    struct ChapInfo { int rank; QString title; QString marker; QString docKey; };
+    QHash<QString, ChapInfo> chapById;
     {
         const QList<Manuscript>& mss = m_projectModel->manuscripts();
         const QList<Chapter>&    chs = m_projectModel->chapters();
@@ -550,48 +595,53 @@ void TimelinePanel::syncCharacterTimelines(bool askSecondary)
         int gi = 0;
         for (const Chapter& c : ordered) {
             const QString ms = c.manuscriptId.isEmpty() ? QStringLiteral("root") : c.manuscriptId;
-            const QString key = QStringLiteral("ch:%1:%2").arg(ms, c.id);
-            chapByKey.insert(key, { gi,
+            chapById.insert(c.id, { gi,
                 c.title.isEmpty() ? tr("Capítulo %1").arg(gi + 1) : c.title,
-                c.timeMarker });
-            chapKeysInOrder.append(key);
+                c.timeMarker,
+                QStringLiteral("ch:%1:%2").arg(ms, c.id) });
             ++gi;
         }
     }
 
-    // ── 2. Decide quem é elegível (perguntando secundários, se for o caso) ─────
-    QSet<QString> eligible;
+    // ── 2. Presença por CENA (uma varredura p/ todos os personagens) ──────────
     QHash<QString, Element> charById;
+    QStringList names;
     for (const Element& e : m_elementsStore->elements()) {
         if (e.type != QStringLiteral("character")) continue;
         charById.insert(e.id, e);
+        names << e.name;
+    }
+    QHash<QString, CharPresenceResult> presence;
+    int totalScenes = 0, totalChapters = 0;
+    m_presenceProvider(names, &presence, &totalScenes, &totalChapters);
+
+    // ── 3. Decide quem é elegível (perguntando secundários, se for o caso) ─────
+    QSet<QString> eligible;
+    for (auto it = charById.begin(); it != charById.end(); ++it) {
+        Element e = it.value();
+        const CharPresenceResult& r = presence.value(e.name.toLower());
 
         int d = RoleTiers::autoTrackDecision(e.role, e.trackMode);
         if (d == -1) {
-            // secundário sem resposta: só pergunta se ele realmente aparece
-            bool hasPresence = false;
-            for (const QString& key : chapKeysInOrder)
-                if (m_elementsStore->hasDocElement(key, e.id)) { hasPresence = true; break; }
-            if (!hasPresence) continue;
-            if (!askSecondary) continue; // modo silencioso não pergunta
+            if (r.sceneCount == 0) continue;  // não aparece → não pergunta
+            if (!askSecondary) continue;       // modo silencioso não pergunta
 
             const auto ans = QMessageBox::question(this, tr("Trilha na linha do tempo"),
                 tr("%1 é um personagem secundário e aparece na obra.\n\n"
                    "Quer acompanhá-lo com uma trilha na linha do tempo?")
                     .arg(e.name.isEmpty() ? tr("Este personagem") : e.name),
                 QMessageBox::Yes | QMessageBox::No);
-            Element upd = e;
-            upd.trackMode = (ans == QMessageBox::Yes) ? QStringLiteral("on")
-                                                      : QStringLiteral("off");
+            e.trackMode = (ans == QMessageBox::Yes) ? QStringLiteral("on")
+                                                    : QStringLiteral("off");
             { QSignalBlocker block(m_elementsStore);
-              m_elementsStore->updateElement(e.id, upd); }
-            charById[e.id] = upd;
+              m_elementsStore->updateElement(e.id, e); }
+            it.value() = e;
             d = (ans == QMessageBox::Yes) ? 1 : 0;
         }
         if (d == 1) eligible.insert(e.id);
     }
 
-    // ── 3. Reconcilia trilhas/eventos sobre o estado AO VIVO da cena ───────────
+    // ── 4. Reconcilia trilhas/eventos sobre o estado AO VIVO da cena ───────────
     QList<TimelineEvent> events = m_scene->allEventData();
     QList<TimelineConn>  conns  = m_scene->allConnectionData();
     QList<TimelineDef>   defs   = m_timelines;
@@ -608,7 +658,7 @@ void TimelinePanel::syncCharacterTimelines(bool askSecondary)
         }
     }
 
-    // garante trilha + eventos auto para cada personagem elegível
+    // garante trilha + eventos (por CENA) para cada personagem elegível
     for (const QString& cid : std::as_const(eligible)) {
         const Element& el = charById[cid];
         const QString tid = QStringLiteral("char:%1").arg(cid);
@@ -620,7 +670,7 @@ void TimelinePanel::syncCharacterTimelines(bool askSecondary)
             TimelineDef t;
             t.id            = tid;
             t.name          = el.name.isEmpty() ? tr("Personagem") : el.name;
-            t.color         = el.image.isEmpty() ? colorForId(cid) : colorForId(cid);
+            t.color         = colorForId(cid);
             t.kind          = QString::fromLatin1(TimelineKind::Character);
             t.characterId   = cid;
             t.autoGenerated = true;
@@ -630,44 +680,75 @@ void TimelinePanel::syncCharacterTimelines(bool askSecondary)
             defs[defIdx].name = el.name.isEmpty() ? tr("Personagem") : el.name; // renome
         }
 
-        // capítulos onde aparece, em ordem de leitura
-        QList<QString> present;
-        for (const QString& key : chapKeysInOrder)
-            if (m_elementsStore->hasDocElement(key, cid)) present.append(key);
+        // presenças (capítulo + cena) em ordem de leitura
+        struct Hit { int rank; int scene; QString chId; bool perScene; QString sceneTitle; };
+        QList<Hit> hits;
+        const CharPresenceResult& r = presence.value(el.name.toLower());
+        for (const PresenceChapterEntry& ce : r.chapters) {
+            if (!chapById.contains(ce.id)) continue;
+            const int rank = chapById.value(ce.id).rank;
+            if (ce.scenes.isEmpty()) {
+                hits.append({ rank, 0, ce.id, false, QString() }); // capítulo de cena única
+            } else {
+                for (const PresenceSceneEntry& se : ce.scenes)
+                    hits.append({ rank, se.index, ce.id, true, se.title });
+            }
+        }
+        std::sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b){
+            if (a.rank != b.rank) return a.rank < b.rank;
+            return a.scene < b.scene;
+        });
 
         QSet<QString> desiredEvIds;
-        for (const QString& key : present)
-            desiredEvIds.insert(QStringLiteral("auto:%1:%2").arg(cid, key));
+        for (const Hit& h : hits)
+            desiredEvIds.insert(QStringLiteral("auto:%1:%2:%3").arg(cid, h.chId).arg(h.scene));
 
         // remove eventos auto obsoletos desta trilha
         events.erase(std::remove_if(events.begin(), events.end(), [&](const TimelineEvent& e){
             return e.autoEvent && e.timelineId == tid && !desiredEvIds.contains(e.id);
         }), events.end());
 
-        // adiciona/atualiza
-        for (const QString& key : present) {
-            const ChapInfo info = chapByKey.value(key);
-            const QString evId = QStringLiteral("auto:%1:%2").arg(cid, key);
+        // adiciona/atualiza — narrativeTick sequencial pela ordem de leitura
+        int tick = 0;
+        for (const Hit& h : hits) {
+            const ChapInfo& info = chapById[h.chId];
+            QString label  = info.title;
+            QString marker = info.marker;
+            if (h.perScene) {
+                const QString sc = h.sceneTitle.isEmpty()
+                    ? tr("Cena %1").arg(h.scene + 1) : h.sceneTitle;
+                label = info.title + QStringLiteral(" · ") + sc;
+                if (const Scene* s = m_projectModel->findScene(h.chId, h.scene))
+                    if (!s->timeMarker.isEmpty()) marker = s->timeMarker;
+            }
+            const QString sceneRef = h.perScene
+                ? QStringLiteral("%1:%2").arg(h.chId).arg(h.scene) : QString();
+            const QString evId = QStringLiteral("auto:%1:%2:%3").arg(cid, h.chId).arg(h.scene);
+
             TimelineEvent* found = nullptr;
             for (auto& e : events) if (e.id == evId) { found = &e; break; }
             if (found) {
-                found->title         = info.label;
-                found->narrativeTick = info.index;
-                found->timeMarker    = info.marker; // propaga marcador renomeado
+                found->title         = label;
+                found->narrativeTick = tick;
+                found->timeMarker    = marker; // propaga marcador renomeado
                 found->timelineId    = tid;
+                found->linkedDocId   = info.docKey;
+                found->linkedSceneId = sceneRef;
                 // storyOrder preservado (arraste do usuário no eixo História)
             } else {
                 TimelineEvent e;
                 e.id            = evId;
                 e.timelineId    = tid;
-                e.title         = info.label;
-                e.narrativeTick = info.index;
-                e.storyOrder    = info.index; // semente; usuário rearranja no eixo História
-                e.timeMarker    = info.marker;
+                e.title         = label;
+                e.narrativeTick = tick;
+                e.storyOrder    = tick; // semente; usuário rearranja no eixo História
+                e.timeMarker    = marker;
                 e.autoEvent     = true;
-                e.linkedDocId   = key;
+                e.linkedDocId   = info.docKey;
+                e.linkedSceneId = sceneRef;
                 events.append(e);
             }
+            ++tick;
         }
     }
 
@@ -712,9 +793,11 @@ void TimelinePanel::save() const
     root[QStringLiteral("panX")] = m_view ? m_view->scrollPos().x() : 0.0;
     root[QStringLiteral("panY")] = m_view ? m_view->scrollPos().y() : 0.0;
     if (m_scene) {
+        const auto vm = m_scene->viewMode();
         root[QStringLiteral("viewMode")] =
-            m_scene->viewMode() == TimelineScene::ViewMode::Rail
-                ? QStringLiteral("rail") : QStringLiteral("constellation");
+            vm == TimelineScene::ViewMode::Rail          ? QStringLiteral("rail")
+          : vm == TimelineScene::ViewMode::Constellation ? QStringLiteral("constellation")
+                                                         : QStringLiteral("spiral");
         root[QStringLiteral("axisMode")] =
             m_scene->axisMode() == TimelineScene::AxisMode::Narrative
                 ? QStringLiteral("narrative") : QStringLiteral("story");
@@ -727,6 +810,7 @@ void TimelinePanel::save() const
         o[QStringLiteral("name")]          = t.name;
         o[QStringLiteral("color")]         = t.color.name();
         o[QStringLiteral("kind")]          = t.kind;
+        o[QStringLiteral("weight")]        = t.weight;
         o[QStringLiteral("railOrder")]     = t.railOrder;
         o[QStringLiteral("parentId")]      = t.parentId;
         o[QStringLiteral("branchFrom")]    = t.branchFromEventId;
@@ -792,10 +876,10 @@ void TimelinePanel::load()
     if (m_view) m_view->applyZoomAndPan(zoom, panX, panY);
 
     if (m_scene) {
-        m_scene->setViewMode(root[QStringLiteral("viewMode")].toString(QStringLiteral("rail"))
-                                 == QStringLiteral("constellation")
-                                 ? TimelineScene::ViewMode::Constellation
-                                 : TimelineScene::ViewMode::Rail);
+        const QString vm = root[QStringLiteral("viewMode")].toString(QStringLiteral("rail"));
+        m_scene->setViewMode(vm == QStringLiteral("constellation") ? TimelineScene::ViewMode::Constellation
+                           : vm == QStringLiteral("spiral")        ? TimelineScene::ViewMode::Spiral
+                                                                   : TimelineScene::ViewMode::Rail);
         m_scene->setAxisMode(root[QStringLiteral("axisMode")].toString(QStringLiteral("narrative"))
                                  == QStringLiteral("story")
                                  ? TimelineScene::AxisMode::Story
@@ -811,6 +895,7 @@ void TimelinePanel::load()
         t.name          = o[QStringLiteral("name")].toString();
         t.color         = QColor(o[QStringLiteral("color")].toString());
         t.kind          = o[QStringLiteral("kind")].toString(QStringLiteral("custom"));
+        t.weight        = o[QStringLiteral("weight")].toString(QStringLiteral("secondary")); // migração: secundária
         t.railOrder     = o[QStringLiteral("railOrder")].toInt(idx); // migração: ordem = índice
         t.parentId          = o[QStringLiteral("parentId")].toString();
         t.branchFromEventId = o[QStringLiteral("branchFrom")].toString();

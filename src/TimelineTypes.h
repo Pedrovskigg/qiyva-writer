@@ -13,12 +13,38 @@ constexpr auto Parallel  = "parallel";   // linha paralela
 constexpr auto Custom    = "custom";     // criada à mão, sem semântica especial
 }
 
+// Importância visual da linha — controla espessura do trilho e tamanho das
+// bolinhas. Independente do `kind` semântico. Strings p/ JSON estável.
+namespace TimelineWeight {
+constexpr auto Primary   = "primary";    // principal — trilho grosso, bolinha grande
+constexpr auto Secondary = "secondary";  // secundária — padrão
+constexpr auto Backstory = "backstory";  // backstory / flashback — trilho tracejado
+}
+
+// Espessura (px) do trilho-guia por importância.
+inline qreal weightLineWidth(const QString& w) {
+    if (w == QLatin1String(TimelineWeight::Primary))   return 4.0;
+    if (w == QLatin1String(TimelineWeight::Backstory)) return 2.5;
+    return 3.0; // secondary (padrão)
+}
+// Fator de escala do raio da bolinha por importância.
+inline qreal weightDotScale(const QString& w) {
+    if (w == QLatin1String(TimelineWeight::Primary))   return 1.5;
+    if (w == QLatin1String(TimelineWeight::Backstory)) return 1.25;
+    return 1.0; // secondary
+}
+// Backstory / flashback desenha o trilho tracejado (convenção de passado/memória).
+inline bool weightIsDashed(const QString& w) {
+    return w == QLatin1String(TimelineWeight::Backstory);
+}
+
 struct TimelineDef {
     QString id;
     QString name;
     QColor  color = QColor(QStringLiteral("#6c8ebf"));
 
     QString kind      = QStringLiteral("custom"); // ver TimelineKind
+    QString weight    = QStringLiteral("secondary"); // ver TimelineWeight (importância visual)
     int     railOrder = 0;            // posição vertical da faixa (Modo Trilho)
 
     // Ramificação: este trilho "descola" de um ponto de outro (estilo branch de git)

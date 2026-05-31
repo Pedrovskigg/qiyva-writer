@@ -19,6 +19,8 @@ constexpr qreal kCardPad   = 12.0;
 constexpr qreal kDragSlop  = 4.0;
 constexpr qreal kMarkLead  = 9.0;   // comprimento do "risco" antes do marcador
 constexpr qreal kMarkH     = 16.0;  // altura da pílula do marcador
+constexpr qreal kHdrGap    = 14.0;  // respiro entre as duas colunas do cabeçalho
+constexpr qreal kRightColW = 110.0; // largura da coluna "Linha do tempo"
 
 QColor cardBg()     { return QColor(28, 28, 32, 246); }
 QColor cardBody()   { return QColor(232, 232, 234); }
@@ -54,6 +56,24 @@ void TimelineEventItem::setTimelineColor(const QColor& c)
 {
     m_timelineColor = c;
     update();
+}
+
+void TimelineEventItem::setTimelineWeight(const QString& w)
+{
+    if (m_weight == w) return;
+    prepareGeometryChange();      // dotRadius muda → bounds mudam
+    m_weight = w;
+    update();
+    emit geometryChanged(m_data.id);
+}
+
+void TimelineEventItem::setTimelineName(const QString& n)
+{
+    if (m_timelineName == n) return;
+    prepareGeometryChange();      // cabeçalho do card muda de altura
+    m_timelineName = n;
+    update();
+    emit geometryChanged(m_data.id);
 }
 
 void TimelineEventItem::setOpen(bool open)
@@ -118,35 +138,36 @@ qreal TimelineEventItem::descContentH() const
                            Qt::TextWordWrap, m_data.description).height();
 }
 
-QRectF TimelineEventItem::cardRect() const
+// Altura do cabeçalho do card (do topo até a linha separadora). Considera as
+// duas colunas — esquerda: título + marcador; direita: "Linha do tempo".
+qreal TimelineEventItem::headerH() const
 {
+    const qreal innerW = kCardW - kCardPad * 2;
+    const bool  hasCol = !m_timelineName.isEmpty();
+    const qreal leftW  = hasCol ? innerW - kRightColW - kHdrGap : innerW;
+
     QFont ft; ft.setPointSizeF(9.5); ft.setBold(true);
     const QFontMetrics fmT(ft);
-    const int titleH = fmT.boundingRect(QRect(0, 0, qRound(kCardW - kCardPad * 2), 100000),
+    const int titleH = fmT.boundingRect(QRect(0, 0, qRound(leftW), 100000),
                                         Qt::TextWordWrap,
                                         m_data.title.isEmpty() ? tr("Evento") : m_data.title)
                           .height();
-    const qreal headerH = kCardPad + titleH
-                        + (m_data.timeMarker.isEmpty() ? 0.0 : 16.0)
-                        + 10.0; // até o separador
+    const qreal leftH  = titleH + (m_data.timeMarker.isEmpty() ? 0.0 : 16.0);
+    const qreal rightH = hasCol ? (13.0 + 18.0) : 0.0; // rótulo pequeno + nome
+    return kCardPad + qMax(leftH, rightH) + 8.0; // respiro até o separador
+}
+
+QRectF TimelineEventItem::cardRect() const
+{
     const qreal descH = qMax(20.0, descContentH());
-    qreal h = headerH + 6.0 + descH + kCardPad;
+    qreal h = headerH() + 6.0 + descH + kCardPad;
     h = qBound(70.0, h, kCardHMax);
     return QRectF(-kCardW / 2.0, dotRadius() + kCardGap, kCardW, h);
 }
 
 qreal TimelineEventItem::descVisH() const
 {
-    QFont ft; ft.setPointSizeF(9.5); ft.setBold(true);
-    const QFontMetrics fmT(ft);
-    const int titleH = fmT.boundingRect(QRect(0, 0, qRound(kCardW - kCardPad * 2), 100000),
-                                        Qt::TextWordWrap,
-                                        m_data.title.isEmpty() ? tr("Evento") : m_data.title)
-                          .height();
-    const qreal headerH = kCardPad + titleH
-                        + (m_data.timeMarker.isEmpty() ? 0.0 : 16.0)
-                        + 10.0;
-    return qMax(0.0, cardRect().height() - headerH - 6.0 - kCardPad);
+    return qMax(0.0, cardRect().height() - headerH() - 6.0 - kCardPad);
 }
 
 bool TimelineEventItem::wheelScroll(int angleDeltaY)
@@ -302,38 +323,61 @@ void TimelineEventItem::paint(QPainter* p,
         p->drawPath(beak);
 
         const qreal innerW = kCardW - kCardPad * 2;
-        qreal y = card.top() + kCardPad;
+        const bool  hasCol = !m_timelineName.isEmpty();
+        const qreal leftW  = hasCol ? innerW - kRightColW - kHdrGap : innerW;
+        const qreal yTop   = card.top() + kCardPad;
+        const qreal sepY   = card.top() + headerH();
 
-        // título
+        // ── Coluna esquerda: título + marcador ─────────────────────────────────
         QFont ft; ft.setPointSizeF(9.5); ft.setBold(true);
         p->setFont(ft);
         p->setPen(fill.lighter(150));
         const QString title = m_data.title.isEmpty() ? tr("Evento") : m_data.title;
-        const QRectF titleR(card.left() + kCardPad, y, innerW,
+        const QRectF titleR(card.left() + kCardPad, yTop, leftW,
                             p->fontMetrics().boundingRect(
-                                QRect(0, 0, qRound(innerW), 100000),
+                                QRect(0, 0, qRound(leftW), 100000),
                                 Qt::TextWordWrap, title).height());
         p->drawText(titleR, Qt::TextWordWrap | Qt::AlignLeft, title);
-        y = titleR.bottom();
 
-        // marcação temporal
         if (!m_data.timeMarker.isEmpty()) {
             QFont fm; fm.setPointSizeF(7.5);
             p->setFont(fm);
             p->setPen(cardMuted());
-            p->drawText(QRectF(card.left() + kCardPad, y + 2, innerW, 14),
+            p->drawText(QRectF(card.left() + kCardPad, titleR.bottom() + 2, leftW, 14),
                         Qt::AlignLeft | Qt::AlignVCenter, m_data.timeMarker);
-            y += 16;
+        }
+
+        // ── Coluna direita: "Linha do tempo" (com divisória vertical) ───────────
+        if (hasCol) {
+            const qreal rx = card.left() + kCardPad + leftW + kHdrGap;
+            // divisória vertical na cor da linha
+            QColor barC = fill; barC.setAlpha(200);
+            p->setPen(QPen(barC, 2.0));
+            p->drawLine(QPointF(rx - kHdrGap / 2.0, yTop + 1.0),
+                        QPointF(rx - kHdrGap / 2.0, sepY - 6.0));
+            // rótulo
+            QFont fl; fl.setPointSizeF(7.5);
+            p->setFont(fl);
+            p->setPen(cardMuted());
+            p->drawText(QRectF(rx, yTop, kRightColW, 13),
+                        Qt::AlignLeft | Qt::AlignVCenter, tr("Linha do tempo:"));
+            // nome da linha (elidido)
+            QFont fn; fn.setPointSizeF(10.5);
+            p->setFont(fn);
+            p->setPen(QColor(232, 232, 234));
+            p->drawText(QRectF(rx, yTop + 14, kRightColW, 18),
+                        Qt::AlignLeft | Qt::AlignVCenter,
+                        p->fontMetrics().elidedText(m_timelineName, Qt::ElideRight,
+                                                    qRound(kRightColW)));
         }
 
         // separador
-        y += 8;
         p->setPen(QColor(255, 255, 255, 30));
-        p->drawLine(QPointF(card.left() + kCardPad, y),
-                    QPointF(card.right() - kCardPad, y));
+        p->drawLine(QPointF(card.left() + kCardPad, sepY),
+                    QPointF(card.right() - kCardPad, sepY));
 
         // descrição (com scroll)
-        const qreal descTop = y + 4;
+        const qreal descTop = sepY + 6;
         const qreal visH = card.bottom() - kCardPad - descTop;
         if (visH > 4.0) {
             QFont fd; fd.setPointSizeF(8.5);

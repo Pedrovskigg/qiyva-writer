@@ -19,6 +19,8 @@ public:
     const TimelineEvent& eventData() const { return m_data; }
     void setEventData(const TimelineEvent& d);
     void setTimelineColor(const QColor& c);
+    void setTimelineWeight(const QString& w); // importância da linha → escala da bolinha
+    void setTimelineName(const QString& n);   // nome da linha → exibido no popover
 
     void setOpen(bool open);
     bool isOpen() const { return m_open; }
@@ -34,11 +36,14 @@ public:
     bool wheelScroll(int angleDeltaY);
 
     // Raio do ponto: eventos autorais são cheios; eventos auto (presença) menores.
-    qreal dotRadius() const { return m_data.autoEvent ? kDotAutoR : kDotR; }
+    // Escala com a importância da linha (principal > backstory > secundária).
+    qreal dotRadius() const {
+        return (m_data.autoEvent ? kDotAutoR : kDotR) * weightDotScale(m_weight);
+    }
 
     static constexpr qreal kDotR     = 7.0;   // ponto autoral
     static constexpr qreal kDotAutoR = 4.5;   // ponto auto (presença)
-    static constexpr qreal kCardW    = 248.0; // largura do popover
+    static constexpr qreal kCardW    = 300.0; // largura do popover
     static constexpr qreal kCardHMax = 320.0; // altura máxima do popover (flex até aqui, depois scroll)
 
 signals:
@@ -70,12 +75,15 @@ private:
     QRectF  labelRect() const;   // rótulo de hover (acima do ponto)
     QRectF  markerRect() const;  // marcador temporal (à direita do ponto, no foco)
     QRectF  cardRect()  const;   // popover (abaixo do ponto)
+    qreal   headerH()      const; // altura do cabeçalho do card (até o separador)
     qreal   descVisH()     const;
     qreal   descContentH() const;
     void    paintScrollbar(QPainter* p, const QRectF& card) const;
 
     TimelineEvent m_data;
     QColor        m_timelineColor{QStringLiteral("#6c8ebf")};
+    QString       m_weight{QStringLiteral("secondary")};
+    QString       m_timelineName;
 
     bool    m_hover        = false;
     bool    m_open         = false;

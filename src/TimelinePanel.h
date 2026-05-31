@@ -1,9 +1,12 @@
 #pragma once
 
+#include "PresenceTypes.h"
 #include "TimelineTypes.h"
 
+#include <QHash>
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 #include <functional>
 
@@ -23,6 +26,12 @@ public:
     // Resolve o texto de um doc vinculado (capítulo/cena/gaveta) p/ a descrição.
     void setDocTextResolver(std::function<QString(const QString&)> resolver);
 
+    // Análise de presença por capítulo/cena (mesma do Drawer). Usada pra gerar
+    // as trilhas automáticas de personagem com granularidade de cena.
+    using PresenceProvider = std::function<void(
+        const QStringList&, QHash<QString, CharPresenceResult>*, int*, int*)>;
+    void setPresenceProvider(PresenceProvider fn) { m_presenceProvider = std::move(fn); }
+
     // Abre o popup de novo evento já pré-preenchido (ex.: criado a partir de um
     // trecho selecionado no editor). Usado pelo MainWindow.
     void promptNewEvent(const QString& description, const QString& marker);
@@ -38,6 +47,7 @@ protected:
 private slots:
     void applyTheme();
     void createTimeline();
+    void editTimeline(const QString& id);
     void createEventAt(const QPointF& scenePos);
     void commitEvent(TimelineEvent e, const QPointF& scenePos); // cria o evento já resolvido
     void openEditPopup(const QString& eventId);
@@ -45,6 +55,9 @@ private slots:
 
 private:
     void buildUi();
+    // Dialog compartilhado de nome+cor+importância. Edita `def` in-place.
+    // isNew muda só os textos (título/botão). Retorna true se confirmado.
+    bool editTimelineDef(TimelineDef& def, bool isNew);
     void save() const;
     void load();
     void toggleViewMode();
@@ -73,6 +86,7 @@ private:
     ProjectModel*   m_projectModel  = nullptr;
     ElementsStore*  m_elementsStore = nullptr;
     std::function<QString(const QString&)> m_docTextResolver;
+    PresenceProvider m_presenceProvider;
 
     // dados — preenchidos nas etapas seguintes
     QList<TimelineDef>   m_timelines;

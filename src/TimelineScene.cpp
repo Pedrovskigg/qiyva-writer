@@ -4,9 +4,12 @@
 
 #include <QFont>
 #include <QFontMetrics>
+#include <QGraphicsSceneContextMenuEvent>
 #include <QGraphicsSceneMouseEvent>
 #include <QGraphicsView>
+#include <QMenu>
 #include <QPainter>
+#include <QPainterPath>
 #include <QQueue>
 #include <QRandomGenerator>
 #include <QRegularExpression>
@@ -27,8 +30,24 @@ constexpr qreal kDimOpacity = 0.16; // opacidade dos elementos fora do foco
 // Ramificações: raio = idade do evento. Mais antigo (ordem menor) fica no
 // centro; mais novo, na borda. O ângulo é livre → bagunça visual, ordem real.
 constexpr qreal kTwoPi     = 6.283185307179586;
-constexpr qreal kConstR0   = 46.0;  // raio do evento mais antigo (ordem 0)
-constexpr qreal kConstRing = 88.0;  // acréscimo de raio por passo de ordem
+constexpr qreal kConstR0   = 55.0;  // raio do evento mais antigo (ordem 0) — +20%
+constexpr qreal kConstRing = 106.0; // acréscimo de raio por passo de ordem — +20%
+
+// Modo Espiral: cada linha é um anel concêntrico. Raio = importância (núcleo →
+// borda); o tempo corre no ângulo (gira a partir do topo), com leve abertura do
+// raio ao longo da volta p/ dar o efeito de espiral e marcar a direção.
+constexpr qreal kSpiralR0    = 95.0;       // raio do anel mais interno (1ª linha)
+constexpr qreal kSpiralRing  = 125.0;      // distância entre anéis de linhas
+constexpr qreal kSpiralRise  = 58.0;       // abertura do raio ao longo de 1 volta
+constexpr qreal kSpiralStart = -1.5707963; // -90° = topo; gira no sentido horário
+
+// Rank de importância p/ ordenar os anéis: principal (núcleo) → secundária →
+// backstory (borda). Desconhecido cai junto da secundária.
+int weightRank(const QString& w) {
+    if (w == QLatin1String(TimelineWeight::Primary))   return 0;
+    if (w == QLatin1String(TimelineWeight::Backstory)) return 2;
+    return 1; // secondary / padrão
+}
 
 // pequeno deslocamento aleatório p/ desempatar nós exatamente sobrepostos
 qreal rand0() { return (QRandomGenerator::global()->bounded(100) - 50) / 50.0; }
@@ -197,6 +216,12 @@ void TimelineScene::setViewMode(ViewMode m)
         seedConstellation();
         applyConnVisibility();
         startSim();
+    } else if (m_viewMode == ViewMode::Spiral) {
+        buildEdges();          // backbone p/ molas + desenho
+        buildSpiralTargets();  // ponto-alvo de cada nó na espiral
+        seedSpiral();          // posiciona perto do alvo; a sim assenta
+        applyConnVisibility();
+        startSim();
     } else {
         stopSim();
         relayout();
@@ -229,8 +254,12 @@ int TimelineScene::nearestRailOrder(qreal y) const
 void TimelineScene::setTimelines(const QList<TimelineDef>& timelines)
 {
     m_timelines = timelines;
-    for (auto* item : m_events)
-        item->setTimelineColor(timelineColor(item->eventData().timelineId));
+    for (auto* item : m_events) {
+        const QString tid = item->eventData().timelineId;
+        item->setTimelineColor(timelineColor(tid));
+        item->setTimelineWeight(timelineWeight(tid));
+        item->setTimelineName(timelineName(tid));
+    }
     relayout();
     update();
 }
@@ -241,6 +270,29 @@ QColor TimelineScene::timelineColor(const QString& timelineId) const
         if (t.id == timelineId) return t.color;
     return QColor(QStringLiteral("#6c8ebf"));
 }
+
+QString TimelineScene::timelineWeight(const QString& timelineId) const
+{
+    for (const auto& t : m_timelines)
+        if (t.id == timelineId) return t.weight;
+    return QStringLiteral("secondary");
+}
+
+QString TimelineScene::timelineName(const QString& timelineId) const
+{
+    for (const auto& t : m_timelines)
+        if (t.id == timelineId) return t.name.isEmpty() ? tr("Linha") : t.name;
+    return {};
+}
+
+bool TimelineScene::isCharacterTimeline(const QString& timelineId) const
+{
+    for (const auto& t : m_timelines)
+        if (t.id == timelineId)
+            return t.kind == QLatin1String(TimelineKind::Character);
+    return false;
+}
+
 
 // ── Eventos ──────────────────────────────────────────────────────────────────
 
@@ -270,6 +322,8 @@ TimelineEventItem* TimelineScene::addEvent(const TimelineEvent& data)
 {
     auto* item = new TimelineEventItem(data);
     item->setTimelineColor(timelineColor(data.timelineId));
+    item->setTimelineWeight(timelineWeight(data.timelineId));
+    item->setTimelineName(timelineName(data.timelineId));
     addItem(item);
     m_events.append(item);
     m_eventById.insert(data.id, item);
@@ -324,7 +378,7 @@ void TimelineScene::onEventPositionChanged(const QString& id)
         if (d.fromEventId == id || d.toEventId == id) conn->invalidate();
     }
 
-    if (m_viewMode == ViewMode::Constellation) {
+    if (m_viewMode == ViewMode::Constellation || m_viewMode == ViewMode::Spiral) {
         // usuário arrastando um nó: prende-o e reaquece a teia ao redor.
         m_pinnedId = id;
         if (!m_simTimer || !m_simTimer->isActive()) startSim();
@@ -340,7 +394,7 @@ void TimelineScene::onEventMovedByUser(const QString& id)
     auto* item = m_eventById.value(id, nullptr);
     if (!item) { emit eventDataChanged(); return; }
 
-    if (m_viewMode == ViewMode::Constellation) {
+    if (m_viewMode == ViewMode::Constellation || m_viewMode == ViewMode::Spiral) {
         // soltou o nó: libera o pino e dá um leve reaquecimento p/ acomodar.
         m_pinnedId.clear();
         m_simAlpha = qMax(m_simAlpha, 0.3);
@@ -362,6 +416,8 @@ void TimelineScene::onEventMovedByUser(const QString& id)
         if (newTid != d.timelineId) {
             d.timelineId = newTid;
             item->setTimelineColor(timelineColor(newTid));
+            item->setTimelineWeight(timelineWeight(newTid));
+            item->setTimelineName(timelineName(newTid));
         }
     }
     // ordem fracionária pela posição horizontal → relayout re-inteiriza
@@ -483,6 +539,12 @@ TimelineConn TimelineScene::autoConnect(const QString& newEventId, const QString
 
 void TimelineScene::applyConnVisibility()
 {
+    // Regra de eixo: Narrativa mostra a presença dos personagens (eventos auto);
+    // História mostra os eventos de enredo (autorais). Cada eixo, uma leitura.
+    const bool showChars = (m_axisMode == AxisMode::Narrative);
+    for (auto* it : m_events)
+        it->setVisible(it->eventData().autoEvent == showChars);
+
     // No Modo Trilho, conexões "sequence" entre eventos do MESMO trilho são
     // redundantes com a própria faixa → escondidas. As demais (cruzamentos) ficam.
     const bool rail = (m_viewMode == ViewMode::Rail);
@@ -493,9 +555,12 @@ void TimelineScene::applyConnVisibility()
         bool sameRail = from && to
             && from->eventData().timelineId == to->eventData().timelineId;
         // Rail: esconde sequência do mesmo trilho (a faixa já mostra a ordem).
-        // Constelação: esconde conexões "sequence" (o backbone já as desenha).
-        const bool hide = (rail && sameRail)
-                       || (!rail && d.type == QLatin1String("sequence"));
+        // Constelação/Espiral: esconde "sequence" (o backbone já as desenha).
+        bool hide = (rail && sameRail)
+                 || (!rail && d.type == QLatin1String("sequence"));
+        // Regra de eixo: esconde conexões que tocam um evento oculto no eixo atual.
+        if (from && from->eventData().autoEvent != showChars) hide = true;
+        if (to   && to->eventData().autoEvent   != showChars) hide = true;
         conn->setVisible(!hide);
         conn->invalidate();
     }
@@ -636,6 +701,16 @@ void TimelineScene::relayout()
         return;
     }
 
+    if (m_viewMode == ViewMode::Spiral) {
+        buildEdges();
+        buildSpiralTargets();
+        seedSpiral();
+        applyConnVisibility();
+        startSim();
+        update();
+        return;
+    }
+
     // Modo Trilho — ordem das faixas por railOrder
     QList<TimelineDef> sorted = m_timelines;
     std::sort(sorted.begin(), sorted.end(),
@@ -757,6 +832,72 @@ void TimelineScene::seedConstellation()
     }
 }
 
+// ── Espiral (viva) ───────────────────────────────────────────────────────────
+// Mesma simulação das Ramificações; muda só o ALVO de cada nó. Cada linha é um
+// anel concêntrico ordenado por importância (principal no núcleo, backstory na
+// borda); dentro do anel o tempo corre no ângulo e o raio abre um pouco ao longo
+// da volta. A espiral emerge da física — repulsão e molas a fazem respirar.
+void TimelineScene::buildSpiralTargets()
+{
+    m_spiralTarget.clear();
+
+    QList<TimelineDef> sorted = m_timelines;
+    std::sort(sorted.begin(), sorted.end(), [](const TimelineDef& a, const TimelineDef& b){
+        const int wa = weightRank(a.weight), wb = weightRank(b.weight);
+        if (wa != wb) return wa < wb;
+        return a.railOrder < b.railOrder;
+    });
+    QHash<QString, int> ringOf;
+    for (int i = 0; i < sorted.size(); ++i) ringOf.insert(sorted[i].id, i);
+
+    const bool narrative = (m_axisMode == AxisMode::Narrative);
+    auto storyKey = [](const TimelineEvent& d) -> qreal {
+        bool ok = false;
+        const qreal c = markerChrono(d.timeMarker, &ok);
+        if (ok) return c;
+        return 1.0e12 + (d.storyOrder >= 0 ? d.storyOrder : d.narrativeTick);
+    };
+
+    for (const auto& t : sorted) {
+        QList<TimelineEventItem*> items;
+        for (auto* it : m_events)
+            if (it->eventData().timelineId == t.id) items.append(it);
+
+        std::sort(items.begin(), items.end(),
+                  [narrative, &storyKey](TimelineEventItem* a, TimelineEventItem* b) {
+            const auto& da = a->eventData();
+            const auto& db = b->eventData();
+            const qreal ka = narrative ? da.narrativeTick : storyKey(da);
+            const qreal kb = narrative ? db.narrativeTick : storyKey(db);
+            if (!qFuzzyCompare(ka + 1.0, kb + 1.0)) return ka < kb;
+            return a->eventData().id < b->eventData().id;
+        });
+
+        const int   k = ringOf.value(t.id, 0);
+        const qreal R = kSpiralR0 + k * kSpiralRing;
+        const int   n = items.size();
+        for (int i = 0; i < n; ++i) {
+            // frac em [0,1): divide por n (não n-1) p/ deixar uma fenda entre o
+            // último e o primeiro evento — marca onde a volta começa/termina.
+            const qreal frac = (n <= 1) ? 0.0 : qreal(i) / qreal(n);
+            const qreal ang  = kSpiralStart + frac * kTwoPi;
+            const qreal rad  = R + frac * kSpiralRise;
+            m_spiralTarget.insert(items[i]->eventData().id,
+                                  QPointF(std::cos(ang) * rad, std::sin(ang) * rad));
+        }
+    }
+}
+
+void TimelineScene::seedSpiral()
+{
+    auto* rnd = QRandomGenerator::global();
+    for (auto* it : m_events) {
+        const QPointF tgt = m_spiralTarget.value(it->eventData().id, QPointF(0, 0));
+        it->setPos(tgt.x() + (rnd->bounded(40) - 20),
+                   tgt.y() + (rnd->bounded(40) - 20));
+    }
+}
+
 void TimelineScene::startSim()
 {
     m_simAlpha = 1.0;
@@ -778,13 +919,18 @@ void TimelineScene::stopSim()
 void TimelineScene::stepSim()
 {
     const int n = m_events.size();
-    if (n == 0 || m_viewMode != ViewMode::Constellation) { stopSim(); return; }
+    const bool sims = (m_viewMode == ViewMode::Constellation || m_viewMode == ViewMode::Spiral);
+    if (n == 0 || !sims) { stopSim(); return; }
+    const bool spiral = (m_viewMode == ViewMode::Spiral);
 
-    // Constantes do modelo
-    constexpr qreal kRep     = 9000.0;  // repulsão entre nós
-    constexpr qreal kSpring  = 0.018;   // rigidez das molas (arestas)
-    constexpr qreal kRest    = 120.0;   // comprimento de repouso da aresta
+    // Constantes do modelo. Na Espiral o atrator ao ponto-alvo DOMINA: a repulsão
+    // cai pra só evitar sobreposição e as molas das conexões desligam (conexão
+    // cruzada rasgaria a forma). A vida vem da repulsão leve + arraste/reaquecer.
+    const qreal kRep     = spiral ? 1800.0 : 11500.0; // repulsão entre nós (+respiro)
+    const qreal kSpring  = spiral ? 0.0    : 0.018;   // molas (arestas) — off na espiral
+    constexpr qreal kRest    = 144.0;   // comprimento de repouso da aresta — +20%
     constexpr qreal kRadialK = 0.030;   // rigidez do anel radial (raio = idade)
+    constexpr qreal kSpiralK = 0.140;   // atração ao ponto-alvo da espiral (forte)
     constexpr qreal kMaxDisp = 45.0;    // deslocamento máx por frame
 
     QVector<QPointF> pos(n);
@@ -795,11 +941,14 @@ void TimelineScene::stepSim()
         idx.insert(m_events[i]->eventData().id, i);
     }
 
-    // Repulsão (O(n²) — n pequeno)
+    // Repulsão (O(n²) — n pequeno). Na Espiral é de alcance curto: só separa nós
+    // que se encostam, sem empurrar de longe (senão borra a forma).
+    constexpr qreal kRepRange2 = 78.0 * 78.0;
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
             QPointF d = pos[i] - pos[j];
             qreal dist2 = d.x()*d.x() + d.y()*d.y();
+            if (spiral && dist2 > kRepRange2) continue; // fora do alcance
             if (dist2 < 1.0) { d = QPointF(rand0(), rand0()); dist2 = 1.0; }
             const qreal dist = std::sqrt(dist2);
             const QPointF dir = d / dist;
@@ -821,21 +970,32 @@ void TimelineScene::stepSim()
         disp[ia] += dir * f;
         disp[ib] -= dir * f;
     };
-    for (const auto& e : m_seqEdges)    applySpring(e.first, e.second);
-    for (const auto* c : m_connections) applySpring(c->connData().fromEventId,
-                                                     c->connData().toEventId);
+    if (!spiral) { // na Espiral as molas ficam off (o atrator organiza tudo)
+        for (const auto& e : m_seqEdges)    applySpring(e.first, e.second);
+        for (const auto* c : m_connections) applySpring(c->connData().fromEventId,
+                                                         c->connData().toEventId);
+    }
 
-    // Anel radial (raio = posição na linha) + integração
+    // Atração estrutural + integração
     for (int i = 0; i < n; ++i) {
-        const int rnk = m_ageRank.value(m_events[i]->eventData().id, 0);
-        const qreal target = kConstR0 + rnk * kConstRing;
-        qreal r = std::sqrt(pos[i].x() * pos[i].x() + pos[i].y() * pos[i].y());
-        QPointF dir;
-        if (r < 0.01) { dir = QPointF(rand0(), rand0()); r = 0.01; }
-        else          dir = pos[i] / r;
-        disp[i] += dir * (target - r) * kRadialK; // puxa pro raio-alvo
+        const QString id = m_events[i]->eventData().id;
+        if (spiral) {
+            // Espiral: puxa o nó pro seu ponto-alvo (anel = importância, ângulo =
+            // tempo). Repulsão/molas deformam organicamente → a espiral "respira".
+            const QPointF tgt = m_spiralTarget.value(id, QPointF(0, 0));
+            disp[i] += (tgt - pos[i]) * kSpiralK;
+        } else {
+            // Ramificações: puxa só pro raio-alvo (idade); ângulo fica livre.
+            const int rnk = m_ageRank.value(id, 0);
+            const qreal target = kConstR0 + rnk * kConstRing;
+            qreal r = std::sqrt(pos[i].x() * pos[i].x() + pos[i].y() * pos[i].y());
+            QPointF dir;
+            if (r < 0.01) { dir = QPointF(rand0(), rand0()); r = 0.01; }
+            else          dir = pos[i] / r;
+            disp[i] += dir * (target - r) * kRadialK;
+        }
 
-        if (m_events[i]->eventData().id == m_pinnedId) continue; // nó preso
+        if (id == m_pinnedId) continue; // nó preso
         QPointF mv = disp[i] * m_simAlpha;
         const qreal mlen = std::sqrt(mv.x()*mv.x() + mv.y()*mv.y());
         if (mlen > kMaxDisp) mv *= (kMaxDisp / mlen);
@@ -861,14 +1021,83 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
 {
     painter->fillRect(rect, m_bgColor);
 
-    // ── Ramificações: desenha o backbone (arestas sequenciais por trilho) ───────
+    // ── Ramificações / Espiral: backbone (arestas sequenciais por trilho) ───────
+    // Mesmo desenho; o que muda é a POSIÇÃO dos nós (livre vs. espiral).
+    // ── Espiral: backbone de cada linha como CURVA SUAVE pelos eventos ──────────
+    // É o que faz a espiral "aparecer" — um traço contínuo seguindo cada anel.
+    if (m_viewMode == ViewMode::Spiral) {
+        painter->setRenderHint(QPainter::Antialiasing);
+        const bool focusing = !m_focusTimelineId.isEmpty();
+
+        // núcleo discreto (origem da espiral)
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor(255, 255, 255, 22));
+        painter->drawEllipse(QPointF(0, 0), 4.0, 4.0);
+
+        // eventos por linha, na MESMA ordem que posicionou os nós (eixo ativo)
+        const bool narrative = (m_axisMode == AxisMode::Narrative);
+        auto storyKey = [](const TimelineEvent& d) -> qreal {
+            bool ok = false;
+            const qreal c = markerChrono(d.timeMarker, &ok);
+            if (ok) return c;
+            return 1.0e12 + (d.storyOrder >= 0 ? d.storyOrder : d.narrativeTick);
+        };
+        QHash<QString, QList<TimelineEventItem*>> byLine;
+        for (auto* it : m_events) byLine[it->eventData().timelineId].append(it);
+
+        const bool showChars = (m_axisMode == AxisMode::Narrative);
+        for (auto it = byLine.begin(); it != byLine.end(); ++it) {
+            QList<TimelineEventItem*>& items = it.value();
+            if (items.size() < 2) continue;
+            if (isCharacterTimeline(it.key()) != showChars) continue; // regra de eixo
+            std::sort(items.begin(), items.end(),
+                      [narrative, &storyKey](TimelineEventItem* a, TimelineEventItem* b){
+                const auto& da = a->eventData();
+                const auto& db = b->eventData();
+                const qreal ka = narrative ? da.narrativeTick : storyKey(da);
+                const qreal kb = narrative ? db.narrativeTick : storyKey(db);
+                if (!qFuzzyCompare(ka + 1.0, kb + 1.0)) return ka < kb;
+                return da.id < db.id;
+            });
+
+            // curva suave (controle = ponto anterior, fim = ponto médio)
+            QPainterPath path;
+            path.moveTo(items.first()->pos());
+            for (int i = 1; i < items.size(); ++i) {
+                const QPointF prev = items[i - 1]->pos();
+                const QPointF cur  = items[i]->pos();
+                path.quadTo(prev, (prev + cur) * 0.5);
+            }
+            path.lineTo(items.last()->pos());
+
+            QColor c = timelineColor(it.key());
+            const qreal mult = (!focusing || it.key() == m_focusTimelineId) ? 1.0 : 0.30;
+            c.setAlpha(int(150 * mult));
+            const QString w = timelineWeight(it.key());
+            QPen pen(c, weightLineWidth(w));
+            pen.setCapStyle(Qt::RoundCap);
+            pen.setJoinStyle(Qt::RoundJoin);
+            if (weightIsDashed(w)) {
+                pen.setStyle(Qt::CustomDashLine);
+                pen.setDashPattern({5.0, 4.0});
+            }
+            painter->setPen(pen);
+            painter->setBrush(Qt::NoBrush);
+            painter->drawPath(path);
+        }
+        return;
+    }
+
+    // ── Ramificações: backbone reto entre nós consecutivos ──────────────────────
     if (m_viewMode == ViewMode::Constellation) {
         painter->setRenderHint(QPainter::Antialiasing);
         const bool focusing = !m_focusTimelineId.isEmpty();
+        const bool showChars = (m_axisMode == AxisMode::Narrative);
         for (const auto& e : m_seqEdges) {
             auto* a = m_eventById.value(e.first, nullptr);
             auto* b = m_eventById.value(e.second, nullptr);
             if (!a || !b) continue;
+            if (isCharacterTimeline(a->eventData().timelineId) != showChars) continue;
             QColor c = timelineColor(a->eventData().timelineId);
             int alpha = 110;
             if (focusing) {
@@ -877,7 +1106,14 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
                 alpha = lit ? 110 : 26;
             }
             c.setAlpha(alpha);
-            painter->setPen(QPen(c, 1.6));
+            // backbone mais fino que o trilho, mas mantém a hierarquia de importância
+            const QString w = timelineWeight(a->eventData().timelineId);
+            QPen bbPen(c, qMax(1.2, weightLineWidth(w) - 1.4));
+            if (weightIsDashed(w)) {
+                bbPen.setStyle(Qt::CustomDashLine);
+                bbPen.setDashPattern({5.0, 4.0});
+            }
+            painter->setPen(bbPen);
             painter->drawLine(a->pos(), b->pos());
         }
         return;
@@ -895,16 +1131,24 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
     painter->setFont(f);
 
     const bool focusing = !m_focusTimelineId.isEmpty();
+    const bool showChars = (m_axisMode == AxisMode::Narrative);
     for (int i = 0; i < sorted.size(); ++i) {
         const qreal y = railY(i);
         if (y < rect.top() - 20 || y > rect.bottom() + 20) continue;
+        if (isCharacterTimeline(sorted[i].id) != showChars) continue; // regra de eixo
         const QColor c = sorted[i].color;
         // Faixa focada fica plena; as demais esmaecem (mas seguem visíveis).
         const qreal mult = (!focusing || sorted[i].id == m_focusTimelineId) ? 1.0 : 0.32;
 
-        // linha-guia da faixa
+        // linha-guia da faixa — espessura/estilo pela importância
         QColor line = c; line.setAlpha(int(70 * mult));
-        painter->setPen(QPen(line, 2.0));
+        QPen guidePen(line, weightLineWidth(sorted[i].weight));
+        guidePen.setCapStyle(Qt::RoundCap);
+        if (weightIsDashed(sorted[i].weight)) {
+            guidePen.setStyle(Qt::CustomDashLine);
+            guidePen.setDashPattern({5.0, 4.0}); // tracejado de backstory/flashback
+        }
+        painter->setPen(guidePen);
         painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
 
         // rótulo "grudado" à esquerda (acompanha o scroll horizontal)
@@ -929,4 +1173,21 @@ void TimelineScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
         return;
     }
     QGraphicsScene::mouseDoubleClickEvent(event);
+}
+
+void TimelineScene::contextMenuEvent(QGraphicsSceneContextMenuEvent* event)
+{
+    // Eventos têm o próprio menu (clique-direito na bolinha) — deixa-os primeiro.
+    QGraphicsScene::contextMenuEvent(event);
+    if (event->isAccepted()) return;
+
+    // Clique-direito numa faixa/rótulo (Modo Trilho) → editar a linha.
+    const QString id = timelineIdAtRailPos(event->scenePos());
+    if (id.isEmpty()) return;
+
+    QMenu menu;
+    auto* actEdit = menu.addAction(tr("Editar linha..."));
+    if (menu.exec(event->screenPos()) == actEdit)
+        emit editTimelineRequested(id);
+    event->accept();
 }

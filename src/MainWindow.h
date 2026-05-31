@@ -3,8 +3,10 @@
 
 #include "CharacterDetector.h"
 #include "EditorHost.h"
+#include "PresenceTypes.h"
 
 #include <QColor>
+#include <QHash>
 #include <QList>
 #include <QMainWindow>
 #include <QMap>
@@ -12,6 +14,7 @@
 #include <QString>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <functional>
 #include <memory>
 
 class QLabel;
@@ -179,6 +182,10 @@ private:
     LeftBar *leftBar;
     DrawerListPanel *drawerListPanel;
     ManuscriptPanel *manuscriptPanel;
+    // Análise de presença por capítulo/cena — compartilhada entre o Drawer
+    // (consistência) e a Timeline (trilhas automáticas de personagem).
+    std::function<void(const QStringList&, QHash<QString, CharPresenceResult>*,
+                       int*, int*)> m_presenceProvider;
     ProjectModel *projectModel;
     DocCache *docCache;
     EditorHost *editorHost;

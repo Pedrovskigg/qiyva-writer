@@ -53,6 +53,17 @@ QPainterPath TimelineConnItem::computePath() const
 
     QPainterPath path;
     path.moveTo(a2);
+
+    // Espiral: arqueia em direção ao núcleo (edge bundling radial) — a corda vira
+    // um arco que abraça o centro em vez de cortar reto através dos anéis.
+    if (m_scene && m_scene->viewMode() == TimelineScene::ViewMode::Spiral) {
+        constexpr qreal kBundle = 0.55; // 0 = reto; 1 = controle no centro
+        const QPointF mid  = (a2 + b2) * 0.5;
+        const QPointF ctrl = mid * (1.0 - kBundle); // puxa o controle pra origem
+        path.quadTo(ctrl, b2);
+        return path;
+    }
+
     const qreal dx = qAbs(b2.x() - a2.x()) * 0.4;
     const qreal dy = (b2.y() - a2.y()) * 0.2;
     path.cubicTo(a2 + QPointF(dx, dy), b2 - QPointF(dx, dy), b2);
@@ -87,17 +98,23 @@ void TimelineConnItem::paint(QPainter* p,
 
     p->setRenderHint(QPainter::Antialiasing);
 
-    // sombra suave
-    QPen shadowPen(QColor(0, 0, 0, 40), m_hovered ? 5.0 : 4.0);
-    shadowPen.setCapStyle(Qt::RoundCap);
-    p->setPen(shadowPen);
-    p->setBrush(Qt::NoBrush);
-    p->translate(1, 1);
-    p->drawPath(m_cachedPath);
-    p->translate(-1, -1);
+    const bool spiral = m_scene && m_scene->viewMode() == TimelineScene::ViewMode::Spiral;
 
-    // linha principal
-    QPen pen(m_color, m_hovered ? 3.0 : 2.0);
+    if (!spiral) {
+        // sombra suave (no Trilho/Ramificações)
+        QPen shadowPen(QColor(0, 0, 0, 40), m_hovered ? 5.0 : 4.0);
+        shadowPen.setCapStyle(Qt::RoundCap);
+        p->setPen(shadowPen);
+        p->setBrush(Qt::NoBrush);
+        p->translate(1, 1);
+        p->drawPath(m_cachedPath);
+        p->translate(-1, -1);
+    }
+
+    // linha principal — na Espiral, mais fina e translúcida p/ não competir
+    QColor lineC = m_color;
+    if (spiral && !m_hovered) lineC.setAlpha(110);
+    QPen pen(lineC, spiral ? (m_hovered ? 2.0 : 1.3) : (m_hovered ? 3.0 : 2.0));
     pen.setCapStyle(Qt::RoundCap);
     p->setPen(pen);
     p->drawPath(m_cachedPath);

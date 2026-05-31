@@ -350,7 +350,7 @@ void MainWindow::setupEditor()
                    const QString& statusDetail, const QString& location) {
         projectModel->updateDrawerItemConsistency(itemId, status, statusDetail, location);
     });
-    drawerListPanel->setPresenceProvider([this](
+    m_presenceProvider = [this](
         const QStringList& names,
         QHash<QString, CharPresenceResult>* out,
         int* outTotalScenes,
@@ -463,7 +463,8 @@ void MainWindow::setupEditor()
                 }
             }
         }
-    });
+    };
+    drawerListPanel->setPresenceProvider(m_presenceProvider);
     manuscriptPanel = new ManuscriptPanel(projectModel, this);
     editorHost = new EditorHost(editor, docCache, projectModel, this);
     editor->setEnabled(false);
@@ -4128,6 +4129,7 @@ TimelinePanel* MainWindow::ensureTimelinePanel()
         });
         timelinePanel->setProjectModel(projectModel);
         timelinePanel->setElementsStore(elementsStore);
+        timelinePanel->setPresenceProvider(m_presenceProvider);
         timelinePanel->setDocTextResolver([this](const QString& key) {
             return docTextForLink(key);
         });

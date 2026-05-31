@@ -10,13 +10,7 @@
 #include <QWidget>
 #include <functional>
 
-struct PresenceSceneEntry { int index = 0; QString title; };
-struct PresenceChapterEntry { QString id; QString title; QList<PresenceSceneEntry> scenes; };
-struct CharPresenceResult {
-    int sceneCount    = 0;
-    int chapterCount  = 0;
-    QList<PresenceChapterEntry> chapters;
-};
+#include "PresenceTypes.h"
 
 class QLabel;
 class QPushButton;
