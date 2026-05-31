@@ -23,6 +23,9 @@ public:
     void setOpen(bool open);
     bool isOpen() const { return m_open; }
 
+    // Marcador temporal "grudado" ao lado da bolinha (ligado no foco da linha).
+    void setShowMarker(bool show);
+
     QRectF       boundingRect() const override;
     QPainterPath shape()        const override;
     void paint(QPainter*, const QStyleOptionGraphicsItem*, QWidget*) override;
@@ -36,7 +39,7 @@ public:
     static constexpr qreal kDotR     = 7.0;   // ponto autoral
     static constexpr qreal kDotAutoR = 4.5;   // ponto auto (presença)
     static constexpr qreal kCardW    = 248.0; // largura do popover
-    static constexpr qreal kCardHMax = 220.0; // altura máxima do popover
+    static constexpr qreal kCardHMax = 320.0; // altura máxima do popover (flex até aqui, depois scroll)
 
 signals:
     void dataChanged(const TimelineEvent& data);
@@ -47,6 +50,8 @@ signals:
     void movedByUser(const QString& id);        // soltou após arrastar → snap no rail
     void openToggled(const QString& id, bool open);
     void exportAsDocRequested(TimelineEvent data);
+    void focusLineRequested(const QString& timelineId, bool expand); // clique → foca a linha
+    void shiftClicked(const QString& eventId);  // Shift+clique → cena decide (conectar/foco)
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent* e)        override;
@@ -63,6 +68,7 @@ private:
     QColor effectiveColor() const;
     QString labelText() const;
     QRectF  labelRect() const;   // rótulo de hover (acima do ponto)
+    QRectF  markerRect() const;  // marcador temporal (à direita do ponto, no foco)
     QRectF  cardRect()  const;   // popover (abaixo do ponto)
     qreal   descVisH()     const;
     qreal   descContentH() const;
@@ -73,6 +79,7 @@ private:
 
     bool    m_hover        = false;
     bool    m_open         = false;
+    bool    m_showMarker   = false;
     bool    m_dragMoved    = false;
     QPointF m_pressScenePos;
     qreal   m_scrollOffset = 0.0;

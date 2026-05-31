@@ -31,6 +31,7 @@
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QToolButton>
 #include <QTextFragment>
@@ -550,6 +551,8 @@ void MainWindow::setupEditor()
         });
     selectionPopup->addAction(QStringLiteral("doc-plus.svg"), tr("Criar documento disso..."),
         [this]() { createDocFromSelection(); });
+    selectionPopup->addAction(QStringLiteral("leftbar/timeline.svg"), tr("Criar evento da linha do tempo..."),
+        [this]() { createTimelineEventFromSelection(); });
 
     variationBar = new VariationBar(projectModel, editorHost, this);
     connect(editorHost, &EditorHost::viewModeChanged, variationBar, &VariationBar::refresh);
@@ -1362,16 +1365,7 @@ void MainWindow::setupEditor()
                 leftBar->setActiveFixedAction(LeftBar::Whiteboard);
             }
         } else if (action == LeftBar::Timeline) {
-            if (!timelinePanel) {
-                timelinePanel = new TimelinePanel(this);
-                connect(timelinePanel, &TimelinePanel::closeRequested, this, [this]() {
-                    leftBar->clearSelection();
-                });
-                timelinePanel->setProjectModel(projectModel);
-                timelinePanel->setElementsStore(elementsStore);
-                if (!projectRoot.isEmpty())
-                    timelinePanel->setProjectRoot(projectRoot);
-            }
+            ensureTimelinePanel();
             if (timelinePanel->isVisible()) {
                 timelinePanel->hide();
                 leftBar->clearSelection();
@@ -4123,6 +4117,114 @@ void MainWindow::createDocFromBond(const QString& drawerKey, const QString& bond
     it.hasInlineHtml = true;
     it.html = html;
     projectModel->addDrawerItem(destKey, it);
+}
+
+TimelinePanel* MainWindow::ensureTimelinePanel()
+{
+    if (!timelinePanel) {
+        timelinePanel = new TimelinePanel(this);
+        connect(timelinePanel, &TimelinePanel::closeRequested, this, [this]() {
+            leftBar->clearSelection();
+        });
+        timelinePanel->setProjectModel(projectModel);
+        timelinePanel->setElementsStore(elementsStore);
+        timelinePanel->setDocTextResolver([this](const QString& key) {
+            return docTextForLink(key);
+        });
+        if (!projectRoot.isEmpty())
+            timelinePanel->setProjectRoot(projectRoot);
+    }
+    return timelinePanel;
+}
+
+QString MainWindow::docTextForLink(const QString& linkKey)
+{
+    if (!projectModel || linkKey.isEmpty()) return QString();
+
+    // 1. obtém o HTML do alvo (preferindo o DocCache, que tem edições ao vivo)
+    QString html;
+    if (linkKey.startsWith(QStringLiteral("ch:"))) {
+        const QString chId = linkKey.mid(3);
+        if (const Chapter* ch = projectModel->findChapter(chId)) {
+            const QString key = DocCache::chapterKey(ch->manuscriptId, ch->id);
+            if (docCache && docCache->has(key)) html = docCache->get(key);
+            else { bool ok = false; html = ProjectStorage::readChapter(projectRoot, ch->file, &ok); if (!ok) html.clear(); }
+        }
+    } else if (linkKey.startsWith(QStringLiteral("sc:"))) {
+        const QString scId = linkKey.mid(3);
+        const Chapter* foundCh = nullptr; int idx = -1;
+        for (const Chapter& ch : projectModel->chapters()) {
+            for (int i = 0; i < ch.scenes.size(); ++i)
+                if (ch.scenes[i].id == scId) { foundCh = &ch; idx = i; break; }
+            if (foundCh) break;
+        }
+        if (foundCh && idx >= 0) {
+            const QString key = DocCache::chapterKey(foundCh->manuscriptId, foundCh->id);
+            QString chHtml = (docCache && docCache->has(key)) ? docCache->get(key) : QString();
+            if (chHtml.isEmpty()) { bool ok = false; chHtml = ProjectStorage::readChapter(projectRoot, foundCh->file, &ok); if (!ok) chHtml.clear(); }
+            const QStringList segs = SceneUtils::splitHtmlIntoScenes(chHtml);
+            if (idx < segs.size()) html = segs[idx];
+        }
+    } else if (linkKey.startsWith(QStringLiteral("doc:"))) {
+        const QString itemId = linkKey.mid(4);
+        const QString key = DocCache::itemKey(itemId);
+        if (docCache && docCache->has(key)) html = docCache->get(key);
+        else if (const DrawerItem* it = projectModel->findDrawerItem(itemId)) {
+            if (it->hasInlineHtml) html = it->html;
+        }
+    }
+    if (html.isEmpty()) return QString();
+
+    // 2. HTML → texto puro
+    QTextDocument doc;
+    doc.setHtml(html);
+    const QString text = doc.toPlainText().trimmed();
+    if (text.isEmpty()) return QString();
+
+    // 3. limite de ~600 palavras; acima disso, começo + aviso
+    constexpr int kMaxWords = 600;
+    const QStringList words = text.split(QRegularExpression(QStringLiteral("\\s+")),
+                                         Qt::SkipEmptyParts);
+    if (words.size() <= kMaxWords) return text;
+    return words.mid(0, kMaxWords).join(QChar(' '))
+         + QStringLiteral("\n\n[…] (trecho dos primeiros %1 de %2 mil palavras — "
+                          "abra o documento original para ler tudo)")
+               .arg(kMaxWords).arg(QString::number(words.size() / 1000.0, 'f', 1));
+}
+
+void MainWindow::createTimelineEventFromSelection()
+{
+    if (!editor || !projectModel || !editorHost) return;
+    QTextCursor cur = editor->textCursor();
+    if (!cur.hasSelection()) return;
+
+    QString raw = cur.selectedText();
+    raw.replace(QChar(0x2029), QChar('\n'));
+    const QString text = raw.trimmed();
+    if (text.isEmpty()) return;
+
+    // Marcador do contexto: a cena onde está a seleção (se tiver marcador),
+    // senão o capítulo. Para gavetas, fica sem marcador.
+    QString marker;
+    const auto vm = editorHost->viewMode();
+    if (vm.type == EditorHost::SceneDoc) {
+        if (const Scene* sc = projectModel->findScene(vm.chapterId, vm.sceneIndex))
+            marker = sc->timeMarker;
+        if (marker.isEmpty())
+            if (const Chapter* ch = projectModel->findChapter(vm.chapterId))
+                marker = ch->timeMarker;
+    } else if (vm.type == EditorHost::ChapterDoc) {
+        if (const Chapter* ch = projectModel->findChapter(vm.chapterId))
+            marker = ch->timeMarker;
+    }
+
+    // Revela a linha do tempo (mostra o evento aterrissando) e abre o popup.
+    auto* panel = ensureTimelinePanel();
+    panel->show();
+    panel->raise();
+    panel->activateWindow();
+    if (leftBar) leftBar->setActiveFixedAction(LeftBar::Timeline);
+    panel->promptNewEvent(text, marker);
 }
 
 void MainWindow::createDocFromSelection()

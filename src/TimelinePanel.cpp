@@ -6,6 +6,7 @@
 #include "RoleTiers.h"
 #include "Theme.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QHash>
 #include <QMessageBox>
@@ -29,6 +30,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
 #include <QPushButton>
 #include <QPixmap>
@@ -113,16 +115,37 @@ void TimelinePanel::buildUi()
     tl->addWidget(makeSep(m_toolbar));
 
     auto* btnNewTimeline = makeBtn(tr("+ Timeline"), tr("Nova linha do tempo"), m_toolbar);
-    auto* btnNewEvent    = makeBtn(tr("+ Evento"),   tr("Novo evento"),         m_toolbar);
     tl->addWidget(btnNewTimeline);
-    tl->addWidget(btnNewEvent);
 
     tl->addWidget(makeSep(m_toolbar));
 
-    m_btnView = makeBtn(QString(), tr("Alternar entre Trilho e Constelação"), m_toolbar);
+    m_btnView = makeBtn(QString(), tr("Alternar entre Trilho e Ramificações"), m_toolbar);
     m_btnAxis = makeBtn(QString(), tr("Alternar entre ordem de Narrativa e tempo da História"), m_toolbar);
     tl->addWidget(m_btnView);
     tl->addWidget(m_btnAxis);
+
+    tl->addWidget(makeSep(m_toolbar));
+
+    // ── Foco / Filtro por linha ────────────────────────────────────────────────
+    m_btnFocus = makeBtn(QString(), tr("Focar em uma linha (esmaece o resto)"), m_toolbar);
+    m_btnFocus->setPopupMode(QToolButton::InstantPopup);
+    m_focusMenu = new QMenu(m_btnFocus);
+    m_btnFocus->setMenu(m_focusMenu);
+
+    m_btnDepth = makeBtn(QString(), tr("Alcance do foco em saltos pelas conexões"), m_toolbar);
+    m_btnDepth->setPopupMode(QToolButton::InstantPopup);
+    auto* depthMenu = new QMenu(m_btnDepth);
+    for (int d = 0; d <= 3; ++d) {
+        const QString label = d == 0 ? tr("Só a linha")
+                            : d == 1 ? tr("1 salto")
+                                     : tr("%1 saltos").arg(d);
+        QAction* a = depthMenu->addAction(label);
+        a->setData(d);
+        connect(a, &QAction::triggered, this, [this, d]() { setFocusDepth(d); });
+    }
+    m_btnDepth->setMenu(depthMenu);
+    tl->addWidget(m_btnFocus);
+    tl->addWidget(m_btnDepth);
 
     tl->addStretch();
 
@@ -130,9 +153,6 @@ void TimelinePanel::buildUi()
     tl->addWidget(btnClose);
 
     connect(btnNewTimeline, &QToolButton::clicked, this, &TimelinePanel::createTimeline);
-    connect(btnNewEvent,    &QToolButton::clicked, this, [this]() {
-        createEventAt(QPointF(0, 0));
-    });
     connect(m_btnView, &QToolButton::clicked, this, &TimelinePanel::toggleViewMode);
     connect(m_btnAxis, &QToolButton::clicked, this, &TimelinePanel::toggleAxisMode);
     connect(btnClose, &QToolButton::clicked, this, &TimelinePanel::closeRequested);
@@ -144,12 +164,35 @@ void TimelinePanel::buildUi()
     m_view  = new TimelineView(m_scene, this);
     root->addWidget(m_view, 1);
 
+    // Botão "+" flutuante sobre o canvas (canto superior esquerdo) → novo evento.
+    m_btnAdd = new QToolButton(m_view);
+    m_btnAdd->setObjectName(QStringLiteral("tlAddOverlay"));
+    m_btnAdd->setText(QStringLiteral("+"));
+    m_btnAdd->setToolTip(tr("Novo evento"));
+    m_btnAdd->setCursor(Qt::PointingHandCursor);
+    m_btnAdd->setFixedSize(36, 36);
+    m_btnAdd->move(12, 12);
+    m_btnAdd->raise();
+    connect(m_btnAdd, &QToolButton::clicked, this, [this]() {
+        // cria no centro do que está visível agora
+        const QPointF c = m_view->mapToScene(m_view->viewport()->rect().center());
+        createEventAt(c);
+    });
+
     connect(m_scene, &TimelineScene::eventDataChanged,  this, [this]() { save(); });
     connect(m_scene, &TimelineScene::eventEditRequested, this, &TimelinePanel::openEditPopup);
-    connect(m_scene, &TimelineScene::canvasDoubleClicked, this, &TimelinePanel::createEventAt);
     connect(m_scene, &TimelineScene::exportEventAsDoc,   this, &TimelinePanel::onExportEventAsDoc);
+    connect(m_scene, &TimelineScene::focusChanged, this, &TimelinePanel::refreshFocusButtons);
+    // clique no fundo (sem arrastar): foca a faixa clicada ou limpa o foco
+    connect(m_view, &TimelineView::bgClicked, this,
+            [this](const QPointF& scenePos, Qt::KeyboardModifiers mods) {
+        const QString id = m_scene->timelineIdAtRailPos(scenePos);
+        m_scene->focusLine(id, mods.testFlag(Qt::ShiftModifier)); // id vazio = limpa
+    });
 
     refreshModeButtons();
+    rebuildFocusMenu();
+    refreshFocusButtons();
 }
 
 void TimelinePanel::toggleViewMode()
@@ -158,6 +201,7 @@ void TimelinePanel::toggleViewMode()
     const bool rail = (m_scene->viewMode() == TimelineScene::ViewMode::Rail);
     m_scene->setViewMode(rail ? TimelineScene::ViewMode::Constellation
                               : TimelineScene::ViewMode::Rail);
+    if (rail == false && m_view) m_view->scrollToRailStart(); // entrou no Trilho
     refreshModeButtons();
     save();
 }
@@ -177,10 +221,74 @@ void TimelinePanel::refreshModeButtons()
     if (!m_scene) return;
     if (m_btnView)
         m_btnView->setText(m_scene->viewMode() == TimelineScene::ViewMode::Rail
-                               ? tr("Trilho") : tr("Constelação"));
+                               ? tr("Trilho") : tr("Ramificações"));
     if (m_btnAxis)
         m_btnAxis->setText(m_scene->axisMode() == TimelineScene::AxisMode::Narrative
                                ? tr("Narrativa") : tr("História"));
+}
+
+// ── Foco / Filtro por linha ──────────────────────────────────────────────────
+
+void TimelinePanel::rebuildFocusMenu()
+{
+    if (!m_focusMenu) return;
+    m_focusMenu->clear();
+
+    QAction* all = m_focusMenu->addAction(tr("Mostrar tudo"));
+    connect(all, &QAction::triggered, this, [this]() { setFocusTimeline(QString()); });
+    m_focusMenu->addSeparator();
+
+    QList<TimelineDef> sorted = m_timelines;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const TimelineDef& a, const TimelineDef& b){ return a.railOrder < b.railOrder; });
+    for (const auto& t : sorted) {
+        const QString name = t.name.isEmpty() ? tr("Linha") : t.name;
+        QAction* a = m_focusMenu->addAction(QIcon(colorDot(t.color, 12)), name);
+        const QString id = t.id;
+        connect(a, &QAction::triggered, this, [this, id]() { setFocusTimeline(id); });
+    }
+}
+
+void TimelinePanel::setFocusTimeline(const QString& id)
+{
+    if (!m_scene) return;
+    if (id.isEmpty()) m_scene->clearFocus();
+    else              m_scene->setFocus(id, m_scene->focusDepth());
+    refreshFocusButtons();
+}
+
+void TimelinePanel::setFocusDepth(int depth)
+{
+    if (!m_scene || m_scene->focusTimelineId().isEmpty()) return;
+    m_scene->setFocus(m_scene->focusTimelineId(), depth);
+    refreshFocusButtons();
+}
+
+void TimelinePanel::refreshFocusButtons()
+{
+    if (!m_scene || !m_btnFocus || !m_btnDepth) return;
+
+    QString fid = m_scene->focusTimelineId();
+    // foco apontando para uma linha que sumiu (ex.: trilha auto removida) → limpa
+    if (!fid.isEmpty()) {
+        bool found = false;
+        for (const auto& t : m_timelines) if (t.id == fid) { found = true; break; }
+        if (!found) { m_scene->clearFocus(); fid.clear(); }
+    }
+
+    if (fid.isEmpty()) {
+        m_btnFocus->setText(tr("Foco"));
+        m_btnDepth->setEnabled(false);
+    } else {
+        QString name = tr("Linha");
+        for (const auto& t : m_timelines) if (t.id == fid) { name = t.name; break; }
+        m_btnFocus->setText(tr("Foco: %1").arg(name));
+        m_btnDepth->setEnabled(true);
+    }
+    const int d = m_scene->focusDepth();
+    m_btnDepth->setText(d == 0 ? tr("Só a linha")
+                      : d == 1 ? tr("1 salto")
+                               : tr("%1 saltos").arg(d));
 }
 
 void TimelinePanel::createTimeline()
@@ -245,16 +353,22 @@ void TimelinePanel::createTimeline()
     m_timelines.append(t);
     m_scene->setTimelines(m_timelines);
     m_scene->relayout();
+    rebuildFocusMenu();
+    refreshFocusButtons();
     save();
     dlg->deleteLater();
 }
 
 void TimelinePanel::createEventAt(const QPointF& scenePos)
 {
-    TimelineEventPopup dlg(m_timelines, this);
+    TimelineEventPopup dlg(m_timelines, m_projectModel, this);
+    dlg.setDocTextResolver(m_docTextResolver);
     if (dlg.exec() != QDialog::Accepted) return;
+    commitEvent(dlg.eventData(), scenePos);
+}
 
-    TimelineEvent e = dlg.eventData();
+void TimelinePanel::commitEvent(TimelineEvent e, const QPointF& scenePos)
+{
     if (e.title.isEmpty()) e.title = tr("Novo evento");
     e.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     e.x  = scenePos.x();
@@ -285,6 +399,36 @@ void TimelinePanel::createEventAt(const QPointF& scenePos)
     save();
 }
 
+void TimelinePanel::promptNewEvent(const QString& description, const QString& marker)
+{
+    // título sugerido a partir das primeiras palavras do trecho
+    auto suggestTitle = [](const QString& text) -> QString {
+        QString flat = text;
+        flat.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+        flat = flat.trimmed();
+        const QStringList words = flat.split(QChar(' '), Qt::SkipEmptyParts);
+        QStringList picked; int total = 0;
+        for (const QString& w : words) {
+            if (picked.size() >= 7 || total + w.size() > 44) break;
+            picked.append(w); total += w.size() + 1;
+        }
+        return picked.isEmpty() ? flat.left(44) : picked.join(QChar(' '));
+    };
+
+    TimelineEventPopup dlg(m_timelines, m_projectModel, this);
+    dlg.setDocTextResolver(m_docTextResolver);
+    TimelineEvent seed;
+    seed.title       = suggestTitle(description);
+    seed.timeMarker  = marker;
+    seed.description = description;
+    dlg.setEventData(seed);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const QPointF c = m_view ? m_view->mapToScene(m_view->viewport()->rect().center())
+                             : QPointF(0, 0);
+    commitEvent(dlg.eventData(), c);
+}
+
 void TimelinePanel::openEditPopup(const QString& id)
 {
     auto* item = m_scene->findEvent(id);
@@ -292,7 +436,8 @@ void TimelinePanel::openEditPopup(const QString& id)
 
     const QString oldTimelineId = item->eventData().timelineId;
 
-    TimelineEventPopup dlg(m_timelines, this);
+    TimelineEventPopup dlg(m_timelines, m_projectModel, this);
+    dlg.setDocTextResolver(m_docTextResolver);
     dlg.setEventData(item->eventData());
     if (dlg.exec() != QDialog::Accepted) return;
 
@@ -352,6 +497,11 @@ void TimelinePanel::setProjectRoot(const QString& root)
 void TimelinePanel::setProjectModel(ProjectModel* model)
 {
     m_projectModel = model;
+}
+
+void TimelinePanel::setDocTextResolver(std::function<QString(const QString&)> resolver)
+{
+    m_docTextResolver = std::move(resolver);
 }
 
 void TimelinePanel::setElementsStore(ElementsStore* store)
@@ -536,6 +686,8 @@ void TimelinePanel::syncCharacterTimelines(bool askSecondary)
     m_scene->clearConnections();
     for (const auto& c : conns) m_scene->addConnection(c);
     m_scene->relayout();
+    rebuildFocusMenu();
+    refreshFocusButtons();
     save();
 }
 
@@ -713,6 +865,8 @@ void TimelinePanel::load()
 
     if (m_scene) m_scene->relayout();
     refreshModeButtons();
+    rebuildFocusMenu();
+    refreshFocusButtons();
 
     // Gera as trilhas automáticas de personagem (e pergunta sobre secundários).
     syncCharacterTimelines(true);
@@ -833,12 +987,28 @@ void TimelinePanel::applyTheme()
             background: %3;
             border: none;
         }
+        QToolButton#tlAddOverlay {
+            background: %7;
+            color: %4;
+            border: 1px solid %3;
+            border-radius: 18px;
+            font-size: 20px;
+            font-weight: 600;
+            padding-bottom: 2px;
+        }
+        QToolButton#tlAddOverlay:hover {
+            background: %8;
+            border-color: %8;
+            color: #ffffff;
+        }
     )").arg(Theme::appBackground(),
             Theme::panelBackground(),
             Theme::subtleBorder(),
             Theme::textPrimary(),
             Theme::textMuted(),
-            Theme::hoverOverlay());
+            Theme::hoverOverlay(),
+            Theme::panelBackground(),
+            Theme::accentDefault());
 
     setStyleSheet(qss);
 }

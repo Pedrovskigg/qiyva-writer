@@ -17,6 +17,8 @@ constexpr qreal kLabelGap  = 8.0;
 constexpr qreal kCardGap   = 12.0;
 constexpr qreal kCardPad   = 12.0;
 constexpr qreal kDragSlop  = 4.0;
+constexpr qreal kMarkLead  = 9.0;   // comprimento do "risco" antes do marcador
+constexpr qreal kMarkH     = 16.0;  // altura da pílula do marcador
 
 QColor cardBg()     { return QColor(28, 28, 32, 246); }
 QColor cardBody()   { return QColor(232, 232, 234); }
@@ -65,6 +67,15 @@ void TimelineEventItem::setOpen(bool open)
     emit geometryChanged(m_data.id);
 }
 
+void TimelineEventItem::setShowMarker(bool show)
+{
+    if (m_showMarker == show) return;
+    prepareGeometryChange();
+    m_showMarker = show;
+    update();
+    emit geometryChanged(m_data.id);
+}
+
 QColor TimelineEventItem::effectiveColor() const
 {
     return m_data.color.isValid() ? m_data.color : m_timelineColor;
@@ -86,6 +97,16 @@ QRectF TimelineEventItem::labelRect() const
     return QRectF(-w / 2.0,
                   -(dotRadius() + kLabelGap + kLabelH),
                   w, kLabelH);
+}
+
+QRectF TimelineEventItem::markerRect() const
+{
+    if (!m_showMarker || m_data.timeMarker.isEmpty()) return {};
+    QFont f; f.setPointSizeF(7.5);
+    const QFontMetrics fm(f);
+    const qreal tw = fm.horizontalAdvance(m_data.timeMarker);
+    const qreal x  = dotRadius() + kMarkLead + 4.0; // depois do risco
+    return QRectF(x, -kMarkH / 2.0, tw + 14.0, kMarkH);
 }
 
 qreal TimelineEventItem::descContentH() const
@@ -168,6 +189,8 @@ QRectF TimelineEventItem::boundingRect() const
     QRectF r(-dotRadius() - 3, -dotRadius() - 3,
              dotRadius() * 2 + 6, dotRadius() * 2 + 6);
     r = r.united(labelRect().adjusted(-2, -2, 2, 2)); // rótulo sempre reservado
+    if (m_showMarker && !m_data.timeMarker.isEmpty())
+        r = r.united(markerRect().adjusted(-2, -2, 2, 2)); // marcador à direita
     if (m_open)
         r = r.united(cardRect().adjusted(-4, -4, 4, 8)); // sombra do card
     return r;
@@ -215,6 +238,24 @@ void TimelineEventItem::paint(QPainter* p,
     p->setPen(Qt::NoPen);
     p->setBrush(QColor(255, 255, 255, m_data.autoEvent ? 40 : 70));
     p->drawEllipse(QPointF(-r * 0.28, -r * 0.28), r * 0.45, r * 0.45);
+
+    // ── Marcador "grudado" à direita (referência de ordem no foco) ─────────────
+    if (m_showMarker && !m_data.timeMarker.isEmpty() && !m_open) {
+        const QRectF mr = markerRect();
+        // risco ligando a bolinha ao marcador
+        p->setPen(QPen(QColor(fill.red(), fill.green(), fill.blue(), 200), 1.4));
+        p->drawLine(QPointF(r + 2.0, 0.0), QPointF(r + kMarkLead, 0.0));
+        // pílula de fundo (legível mesmo sobre fios)
+        p->setPen(Qt::NoPen);
+        p->setBrush(QColor(20, 20, 24, 214));
+        p->drawRoundedRect(mr, kMarkH / 2.0, kMarkH / 2.0);
+        // texto
+        QFont fmk; fmk.setPointSizeF(7.5);
+        p->setFont(fmk);
+        p->setPen(fill.lighter(160));
+        p->drawText(mr.adjusted(8, 0, -6, 0),
+                    Qt::AlignVCenter | Qt::AlignLeft, m_data.timeMarker);
+    }
 
     // ── Rótulo de hover (acima do ponto) ──────────────────────────────────────
     if (m_hover && !m_open) {
@@ -340,10 +381,18 @@ void TimelineEventItem::mouseReleaseEvent(QGraphicsSceneMouseEvent* e)
         emit movedByUser(m_data.id);
         return;
     }
-    // clique sem arrastar: só alterna o popover se foi no ponto (não no card)
+    // clique sem arrastar no ponto (não no card)
     if (QLineF(e->pos(), QPointF(0, 0)).length() <= dotRadius() + kDragSlop) {
-        setOpen(!m_open);
-        emit openToggled(m_data.id, m_open);
+        if (e->modifiers().testFlag(Qt::ShiftModifier)) {
+            // Shift: a cena decide — se há um evento aberto, cria um fio dele até
+            // este; senão, expande o foco. Não mexe no popover.
+            emit shiftClicked(m_data.id);
+        } else {
+            // clique normal: foca a linha do evento E alterna o popover dele
+            setOpen(!m_open);
+            emit openToggled(m_data.id, m_open);
+            emit focusLineRequested(m_data.timelineId, false);
+        }
     }
 }
 

@@ -176,7 +176,7 @@ LeftBar::LeftBar(ProjectModel* model, QWidget* parent)
         tr("Lousa de planejamento"),
         Whiteboard));
     m_rootLayout->addWidget(makeFixedButton(
-        QStringLiteral(""),
+        QStringLiteral("timeline.svg"),
         QStringLiteral("T"),
         tr("Linha do tempo"),
         Timeline));

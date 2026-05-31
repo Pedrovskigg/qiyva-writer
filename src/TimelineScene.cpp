@@ -3,9 +3,14 @@
 #include "TimelineEventItem.h"
 
 #include <QFont>
+#include <QFontMetrics>
 #include <QGraphicsSceneMouseEvent>
+#include <QGraphicsView>
 #include <QPainter>
+#include <QQueue>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QStringList>
 #include <QTimer>
 #include <QUuid>
 #include <QVector>
@@ -15,11 +20,161 @@
 namespace {
 constexpr qreal kRailTop  = 70.0;
 constexpr qreal kRailGap  = 96.0;
-constexpr qreal kRailLeft = 60.0;
+constexpr qreal kRailLeft = 150.0;  // calha à esquerda p/ os rótulos das faixas
 constexpr qreal kTickGap  = 150.0;
+constexpr qreal kDimOpacity = 0.16; // opacidade dos elementos fora do foco
+
+// Ramificações: raio = idade do evento. Mais antigo (ordem menor) fica no
+// centro; mais novo, na borda. O ângulo é livre → bagunça visual, ordem real.
+constexpr qreal kTwoPi     = 6.283185307179586;
+constexpr qreal kConstR0   = 46.0;  // raio do evento mais antigo (ordem 0)
+constexpr qreal kConstRing = 88.0;  // acréscimo de raio por passo de ordem
 
 // pequeno deslocamento aleatório p/ desempatar nós exatamente sobrepostos
 qreal rand0() { return (QRandomGenerator::global()->bounded(100) - 50) / 50.0; }
+
+// Lê um marcador de relógio em minutos do dia: "02:00", "23h04", "14h30", "9h".
+// Retorna -1 se o marcador não for um horário reconhecível (ex.: "Dia 5", "Inverno").
+qreal markerClockMinutes(const QString& marker)
+{
+    if (marker.isEmpty()) return -1.0;
+    static const QRegularExpression reHM(QStringLiteral("(\\d{1,2})\\s*[:h]\\s*(\\d{2})"));
+    static const QRegularExpression reH(QStringLiteral("\\b(\\d{1,2})\\s*h(?![\\dh])"));
+    QRegularExpressionMatch m = reHM.match(marker);
+    if (m.hasMatch()) {
+        const int hh = m.captured(1).toInt();
+        const int mm = m.captured(2).toInt();
+        if (hh <= 47 && mm <= 59) return hh * 60.0 + mm;
+    }
+    m = reH.match(marker);
+    if (m.hasMatch()) {
+        const int hh = m.captured(1).toInt();
+        if (hh <= 47) return hh * 60.0;
+    }
+    return -1.0;
+}
+
+// Converte um numeral romano (i..mmm) em inteiro; 0 se inválido.
+int romanToInt(const QString& s)
+{
+    static const QHash<QChar, int> val{
+        {'i',1},{'v',5},{'x',10},{'l',50},{'c',100},{'d',500},{'m',1000}};
+    int total = 0, prev = 0;
+    for (int i = s.size() - 1; i >= 0; --i) {
+        const int v = val.value(s.at(i).toLower(), -1);
+        if (v < 0) return 0;
+        total += (v < prev) ? -v : v;
+        prev = v;
+    }
+    return total;
+}
+
+// Parser cronológico: transforma um marcador livre num escalar comparável (em
+// minutos, com 1 dia = 1440). Entende relógio, períodos do dia, "Dia N",
+// "Ano N"/romano, datas (DD/MM[/AAAA], AAAA-MM-DD), estações e "há N anos/dias".
+// okOut = true se reconheceu ALGO. Marcadores não reconhecidos → ordem manual.
+qreal markerChrono(const QString& raw, bool* okOut)
+{
+    constexpr qreal DAY = 1440.0;
+    const QString s = raw.toLower().trimmed();
+    bool ok = false;
+    qreal days = 0.0, minutes = 0.0;
+
+    if (s.isEmpty()) { if (okOut) *okOut = false; return 0.0; }
+
+    // ── hora explícita (02:00, 23h04, 9h) ─────────────────────────────────────
+    const qreal clk = markerClockMinutes(s);
+    if (clk >= 0.0) { minutes = clk; ok = true; }
+    else {
+        // ── período do dia (sem hora explícita) ───────────────────────────────
+        struct P { const char* w; qreal m; };
+        static const P periods[] = {
+            {"meia-noite",0},{"meia noite",0},{"madrugada",180},{"alvorada",330},
+            {"amanhecer",360},{"nascer do sol",360},{"manhã",540},{"manha",540},
+            {"meio-dia",720},{"meio dia",720},{"tarde",900},{"entardecer",1050},
+            {"pôr do sol",1080},{"por do sol",1080},{"anoitecer",1110},
+            {"crepúsculo",1110},{"crepusculo",1110},{"noite",1260}};
+        for (const auto& p : periods)
+            if (s.contains(QString::fromUtf8(p.w))) { minutes = p.m; ok = true; break; }
+    }
+
+    // ── "há N anos/meses/semanas/dias/horas/minutos" → passado (negativo) ─────
+    {
+        static const QRegularExpression re(QStringLiteral(
+            "h[áa]\\s+(\\d+)\\s*(anos?|m[êe]s(?:es)?|semanas?|dias?|horas?|minutos?)"));
+        const auto m = re.match(s);
+        if (m.hasMatch()) {
+            const qreal n = m.captured(1).toDouble();
+            const QString u = m.captured(2);
+            if      (u.startsWith(QStringLiteral("ano"))) days   -= n * 365.0;
+            else if (u.startsWith(QStringLiteral("mê")) ||
+                     u.startsWith(QStringLiteral("mes"))) days   -= n * 30.0;
+            else if (u.startsWith(QStringLiteral("sem"))) days   -= n * 7.0;
+            else if (u.startsWith(QStringLiteral("dia"))) days   -= n;
+            else if (u.startsWith(QStringLiteral("hora"))) minutes -= n * 60.0;
+            else if (u.startsWith(QStringLiteral("min")))  minutes -= n;
+            ok = true;
+        }
+    }
+
+    // ── datas absolutas ────────────────────────────────────────────────────────
+    bool dated = false;
+    {
+        static const QRegularExpression reYMD(QStringLiteral("(\\d{4})-(\\d{1,2})-(\\d{1,2})"));
+        const auto m = reYMD.match(s);
+        if (m.hasMatch()) {
+            const int y = m.captured(1).toInt(), mo = m.captured(2).toInt(), d = m.captured(3).toInt();
+            days += y * 372.0 + (mo - 1) * 31.0 + (d - 1); ok = dated = true;
+        }
+    }
+    if (!dated) {
+        static const QRegularExpression reDMY(QStringLiteral("\\b(\\d{1,2})[/.](\\d{1,2})(?:[/.](\\d{2,4}))?\\b"));
+        const auto m = reDMY.match(s);
+        if (m.hasMatch()) {
+            const int d = m.captured(1).toInt(), mo = m.captured(2).toInt();
+            int y = m.captured(3).isEmpty() ? 0 : m.captured(3).toInt();
+            if (y > 0 && y < 100) y += 2000; // "23" → 2023
+            days += y * 372.0 + (mo - 1) * 31.0 + (d - 1); ok = dated = true;
+        }
+    }
+
+    // ── "Dia N" / "Dia seguinte" ──────────────────────────────────────────────
+    if (!dated) {
+        static const QRegularExpression reDia(QStringLiteral("\\bdia\\s+(\\d+)"));
+        const auto m = reDia.match(s);
+        if (m.hasMatch()) { days += m.captured(1).toDouble() - 1.0; ok = true; }
+        else if (s.contains(QStringLiteral("seguinte"))) { days += 1.0; ok = true; }
+    }
+
+    // ── "Ano N" / "Ano III" ───────────────────────────────────────────────────
+    {
+        static const QRegularExpression reAnoN(QStringLiteral("\\bano\\s+(\\d+)"));
+        const auto mN = reAnoN.match(s);
+        if (mN.hasMatch()) { days += mN.captured(1).toDouble() * 372.0; ok = true; }
+        else {
+            static const QRegularExpression reAnoR(QStringLiteral("\\bano\\s+([ivxlcdm]+)\\b"));
+            const auto mR = reAnoR.match(s);
+            if (mR.hasMatch()) {
+                const int r = romanToInt(mR.captured(1));
+                if (r > 0) { days += r * 372.0; ok = true; }
+            }
+        }
+    }
+
+    // ── estações (aprox. por dia do ano) ──────────────────────────────────────
+    if      (s.contains(QStringLiteral("primavera"))) { days += 80.0;  ok = true; }
+    else if (s.contains(QStringLiteral("verão")) ||
+             s.contains(QStringLiteral("verao")))     { days += 172.0; ok = true; }
+    else if (s.contains(QStringLiteral("outono")))    { days += 266.0; ok = true; }
+    else if (s.contains(QStringLiteral("inverno")))   { days += 355.0; ok = true; }
+
+    // ── nudges relativos fracos ───────────────────────────────────────────────
+    if (s.contains(QStringLiteral("antes")))  { days -= 0.5; ok = true; }
+    if (s.contains(QStringLiteral("depois"))) { days += 0.5; ok = true; }
+
+    if (okOut) *okOut = ok;
+    return days * DAY + minutes;
+}
 } // namespace
 
 TimelineScene::TimelineScene(QObject* parent) : QGraphicsScene(parent)
@@ -38,8 +193,8 @@ void TimelineScene::setViewMode(ViewMode m)
     if (m_viewMode == m) return;
     m_viewMode = m;
     if (m_viewMode == ViewMode::Constellation) {
+        buildEdges();          // calcula ranks ANTES de semear (raio depende deles)
         seedConstellation();
-        buildEdges();
         applyConnVisibility();
         startSim();
     } else {
@@ -105,6 +260,10 @@ void TimelineScene::wireEvent(TimelineEventItem* item)
             this, &TimelineScene::eventEditRequested);
     connect(item, &TimelineEventItem::exportAsDocRequested,
             this, &TimelineScene::exportEventAsDoc);
+    connect(item, &TimelineEventItem::focusLineRequested,
+            this, [this](const QString& timelineId, bool expand) { focusLine(timelineId, expand); });
+    connect(item, &TimelineEventItem::shiftClicked,
+            this, &TimelineScene::onEventShiftClicked);
 }
 
 TimelineEventItem* TimelineScene::addEvent(const TimelineEvent& data)
@@ -223,6 +382,38 @@ void TimelineScene::onEventOpenToggled(const QString& id, bool open)
             item->setOpen(false);
 }
 
+void TimelineScene::onEventShiftClicked(const QString& eventId)
+{
+    // Origem do fio = evento aberto no momento (≠ este).
+    TimelineEventItem* source = nullptr;
+    for (auto* it : m_events)
+        if (it->isOpen() && it->eventData().id != eventId) { source = it; break; }
+
+    if (!source) {
+        // Nada aberto → mantém o atalho de expandir o foco da linha clicada.
+        if (auto* it = m_eventById.value(eventId, nullptr))
+            focusLine(it->eventData().timelineId, true);
+        return;
+    }
+
+    const QString fromId = source->eventData().id;
+    // Evita fio duplicado (em qualquer direção).
+    for (const auto* c : m_connections) {
+        const auto& d = c->connData();
+        if ((d.fromEventId == fromId && d.toEventId == eventId)
+         || (d.fromEventId == eventId && d.toEventId == fromId))
+            return;
+    }
+
+    TimelineConn conn;
+    conn.id          = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    conn.fromEventId = fromId;
+    conn.toEventId   = eventId;
+    conn.type        = QStringLiteral("reference"); // fio manual (cruzamento)
+    addConnection(conn);
+    emit eventDataChanged(); // persiste no timeline.json
+}
+
 // ── Conexões ─────────────────────────────────────────────────────────────────
 
 TimelineConnItem* TimelineScene::addConnection(const TimelineConn& data)
@@ -308,6 +499,127 @@ void TimelineScene::applyConnVisibility()
         conn->setVisible(!hide);
         conn->invalidate();
     }
+    applyFocusDimming();
+}
+
+// ── Foco / Filtro por linha ──────────────────────────────────────────────────
+
+void TimelineScene::setFocus(const QString& timelineId, int depth)
+{
+    m_focusTimelineId = timelineId;
+    m_focusDepth      = qBound(0, depth, 3);
+    applyFocusDimming();
+    update();
+    emit focusChanged();
+}
+
+void TimelineScene::clearFocus()
+{
+    if (m_focusTimelineId.isEmpty()) return;
+    m_focusTimelineId.clear();
+    applyFocusDimming();
+    update();
+    emit focusChanged();
+}
+
+void TimelineScene::focusLine(const QString& timelineId, bool expand)
+{
+    if (timelineId.isEmpty()) { clearFocus(); return; }
+    int depth = 0;                               // clique simples: só a linha
+    if (expand)
+        depth = (timelineId == m_focusTimelineId) ? qMin(3, m_focusDepth + 1) // +1 anel
+                                                  : 1;                         // outra linha: 1 salto
+    setFocus(timelineId, depth);
+}
+
+QString TimelineScene::timelineIdAtRailPos(const QPointF& scenePos) const
+{
+    if (m_viewMode != ViewMode::Rail) return {};
+
+    QList<TimelineDef> sorted = m_timelines;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const TimelineDef& a, const TimelineDef& b){ return a.railOrder < b.railOrder; });
+
+    const bool haveView = !views().isEmpty();
+    const qreal viewLeft = haveView ? views().first()->mapToScene(0, 0).x() : 0.0;
+    QFont f; f.setPointSizeF(8.0); f.setBold(true);
+    const QFontMetrics fm(f);
+
+    for (int i = 0; i < sorted.size(); ++i) {
+        const qreal y = railY(i);
+        // rótulo grudado à esquerda
+        if (haveView) {
+            const QString name = sorted[i].name.isEmpty() ? tr("Linha") : sorted[i].name;
+            const QRectF tagR(viewLeft + 10.0, y - 26, fm.horizontalAdvance(name) + 18, 18);
+            if (tagR.contains(scenePos)) return sorted[i].id;
+        }
+        // a própria linha-guia (tolerância vertical)
+        if (std::abs(scenePos.y() - y) <= 6.0) return sorted[i].id;
+    }
+    return {};
+}
+
+QSet<QString> TimelineScene::eventsWithinFocus() const
+{
+    QSet<QString> inSet;
+    if (m_focusTimelineId.isEmpty()) return inSet;
+
+    // Grafo de saltos = as conexões persistidas (qualquer tipo).
+    QHash<QString, QStringList> adj;
+    for (const auto* c : m_connections) {
+        const auto& d = c->connData();
+        adj[d.fromEventId] << d.toEventId;
+        adj[d.toEventId]   << d.fromEventId;
+    }
+
+    // Semente (distância 0) = todos os eventos da linha focada.
+    QHash<QString, int> dist;
+    QQueue<QString> q;
+    for (const auto* it : m_events) {
+        const auto& d = it->eventData();
+        if (d.timelineId == m_focusTimelineId) {
+            dist.insert(d.id, 0);
+            inSet.insert(d.id);
+            q.enqueue(d.id);
+        }
+    }
+    // BFS limitada a m_focusDepth saltos.
+    while (!q.isEmpty()) {
+        const QString cur = q.dequeue();
+        const int dc = dist.value(cur);
+        if (dc >= m_focusDepth) continue;
+        for (const QString& nb : adj.value(cur)) {
+            if (!dist.contains(nb)) {
+                dist.insert(nb, dc + 1);
+                inSet.insert(nb);
+                q.enqueue(nb);
+            }
+        }
+    }
+    return inSet;
+}
+
+void TimelineScene::applyFocusDimming()
+{
+    if (m_focusTimelineId.isEmpty()) {
+        m_focusSet.clear();
+        for (auto* it : m_events)      { it->setOpacity(1.0); it->setShowMarker(false); }
+        for (auto* c  : m_connections) c->setOpacity(1.0);
+        return;
+    }
+    m_focusSet = eventsWithinFocus();
+    for (auto* it : m_events) {
+        const auto& d = it->eventData();
+        it->setOpacity(m_focusSet.contains(d.id) ? 1.0 : kDimOpacity);
+        // marcador ao lado da bolinha só nos eventos da linha focada
+        it->setShowMarker(d.timelineId == m_focusTimelineId);
+    }
+    for (auto* c : m_connections) {
+        const auto& d = c->connData();
+        const bool lit = m_focusSet.contains(d.fromEventId)
+                      && m_focusSet.contains(d.toEventId);
+        c->setOpacity(lit ? 1.0 : kDimOpacity);
+    }
 }
 
 // ── Layout ─────────────────────────────────────────────────────────────────────
@@ -315,9 +627,9 @@ void TimelineScene::applyConnVisibility()
 void TimelineScene::relayout()
 {
     if (m_viewMode == ViewMode::Constellation) {
-        // Modelo efêmero: re-semeia a partir do Trilho e simula de novo.
+        // Modelo efêmero: re-semeia e simula de novo.
+        buildEdges();          // ranks ANTES de semear (raio depende deles)
         seedConstellation();
-        buildEdges();
         applyConnVisibility();
         startSim();
         update();
@@ -333,6 +645,16 @@ void TimelineScene::relayout()
 
     const bool narrative = (m_axisMode == AxisMode::Narrative);
 
+    // Eixo História: ordena pelo marcador de relógio quando há; senão cai na
+    // ordem manual (storyOrder) jogada pro fim, depois na ordem de leitura.
+    auto storyKey = [](const TimelineEvent& d) -> qreal {
+        bool ok = false;
+        const qreal c = markerChrono(d.timeMarker, &ok);
+        if (ok) return c;
+        // sem marcador cronológico: ordem manual, jogada bem pro fim
+        return 1.0e12 + (d.storyOrder >= 0 ? d.storyOrder : d.narrativeTick);
+    };
+
     for (const auto& t : sorted) {
         // eventos desta faixa
         QList<TimelineEventItem*> items;
@@ -340,13 +662,11 @@ void TimelineScene::relayout()
             if (it->eventData().timelineId == t.id) items.append(it);
 
         std::sort(items.begin(), items.end(),
-                  [narrative](TimelineEventItem* a, TimelineEventItem* b) {
+                  [narrative, &storyKey](TimelineEventItem* a, TimelineEventItem* b) {
             const auto& da = a->eventData();
             const auto& db = b->eventData();
-            const qreal ka = narrative ? da.narrativeTick
-                                       : (da.storyOrder >= 0 ? da.storyOrder : da.narrativeTick);
-            const qreal kb = narrative ? db.narrativeTick
-                                       : (db.storyOrder >= 0 ? db.storyOrder : db.narrativeTick);
+            const qreal ka = narrative ? da.narrativeTick : storyKey(da);
+            const qreal kb = narrative ? db.narrativeTick : storyKey(db);
             if (!qFuzzyCompare(ka + 1.0, kb + 1.0)) return ka < kb;
             return a->pos().x() < b->pos().x();
         });
@@ -381,28 +701,59 @@ QHash<QString, int> TimelineScene::orderMap() const
 void TimelineScene::buildEdges()
 {
     m_seqEdges.clear();
+    m_ageRank.clear();
+    const bool narrative = (m_axisMode == AxisMode::Narrative);
+
     QHash<QString, QList<TimelineEventItem*>> byLine;
     for (auto* it : m_events) byLine[it->eventData().timelineId].append(it);
+
     for (auto it = byLine.begin(); it != byLine.end(); ++it) {
         QList<TimelineEventItem*>& items = it.value();
+
+        // backbone segue a ordem de leitura (narrativeTick)
         std::sort(items.begin(), items.end(), [](TimelineEventItem* a, TimelineEventItem* b){
             return a->eventData().narrativeTick < b->eventData().narrativeTick;
         });
         for (int i = 1; i < items.size(); ++i)
             m_seqEdges.append({ items[i-1]->eventData().id, items[i]->eventData().id });
+
+        // rank p/ o RAIO (= idade): no eixo História é cronológico pelo marcador.
+        // É a POSIÇÃO (0,1,2...) na linha, nunca o valor cru — senão uma data
+        // distante jogaria o nó pra fora do canvas.
+        if (!narrative) {
+            std::sort(items.begin(), items.end(), [](TimelineEventItem* a, TimelineEventItem* b){
+                const auto& da = a->eventData(); const auto& db = b->eventData();
+                bool oa = false, ob = false;
+                qreal ka = markerChrono(da.timeMarker, &oa);
+                if (!oa) ka = 1.0e12 + (da.storyOrder >= 0 ? da.storyOrder : da.narrativeTick);
+                qreal kb = markerChrono(db.timeMarker, &ob);
+                if (!ob) kb = 1.0e12 + (db.storyOrder >= 0 ? db.storyOrder : db.narrativeTick);
+                if (ka != kb) return ka < kb;
+                return da.id < db.id;
+            });
+        }
+        for (int i = 0; i < items.size(); ++i)
+            m_ageRank.insert(items[i]->eventData().id, i);
     }
 }
 
 void TimelineScene::seedConstellation()
 {
     const QHash<QString, int> om = orderMap();
+    const int nT = qMax(1, m_timelines.size());
     auto* rnd = QRandomGenerator::global();
     for (auto* it : m_events) {
         const auto& d = it->eventData();
         const int order = om.value(d.timelineId, 0);
-        const qreal jx = rnd->bounded(60) - 30;
-        const qreal jy = rnd->bounded(60) - 30;
-        it->setPos(tickX(d.narrativeTick) + jx, railY(order) + jy);
+
+        // raio = idade = POSIÇÃO do evento na linha (anel); centro = mais antigo
+        const int rnk = m_ageRank.value(d.id, 0);
+        const qreal radius = kConstR0 + rnk * kConstRing + (rnd->bounded(40) - 20);
+
+        // ângulo base por trilho (espalhado no círculo) + dispersão aleatória
+        const qreal baseAng = (kTwoPi * order) / nT;
+        const qreal ang = baseAng + (rnd->bounded(1000) / 1000.0 - 0.5) * 1.1;
+        it->setPos(std::cos(ang) * radius, std::sin(ang) * radius);
     }
 }
 
@@ -433,7 +784,7 @@ void TimelineScene::stepSim()
     constexpr qreal kRep     = 9000.0;  // repulsão entre nós
     constexpr qreal kSpring  = 0.018;   // rigidez das molas (arestas)
     constexpr qreal kRest    = 120.0;   // comprimento de repouso da aresta
-    constexpr qreal kGravity = 0.015;   // gravidade ao centro
+    constexpr qreal kRadialK = 0.030;   // rigidez do anel radial (raio = idade)
     constexpr qreal kMaxDisp = 45.0;    // deslocamento máx por frame
 
     QVector<QPointF> pos(n);
@@ -474,9 +825,16 @@ void TimelineScene::stepSim()
     for (const auto* c : m_connections) applySpring(c->connData().fromEventId,
                                                      c->connData().toEventId);
 
-    // Gravidade + integração
+    // Anel radial (raio = posição na linha) + integração
     for (int i = 0; i < n; ++i) {
-        disp[i] -= pos[i] * kGravity;
+        const int rnk = m_ageRank.value(m_events[i]->eventData().id, 0);
+        const qreal target = kConstR0 + rnk * kConstRing;
+        qreal r = std::sqrt(pos[i].x() * pos[i].x() + pos[i].y() * pos[i].y());
+        QPointF dir;
+        if (r < 0.01) { dir = QPointF(rand0(), rand0()); r = 0.01; }
+        else          dir = pos[i] / r;
+        disp[i] += dir * (target - r) * kRadialK; // puxa pro raio-alvo
+
         if (m_events[i]->eventData().id == m_pinnedId) continue; // nó preso
         QPointF mv = disp[i] * m_simAlpha;
         const qreal mlen = std::sqrt(mv.x()*mv.x() + mv.y()*mv.y());
@@ -503,15 +861,22 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
 {
     painter->fillRect(rect, m_bgColor);
 
-    // ── Constelação: desenha o backbone (arestas sequenciais por trilho) ────────
+    // ── Ramificações: desenha o backbone (arestas sequenciais por trilho) ───────
     if (m_viewMode == ViewMode::Constellation) {
         painter->setRenderHint(QPainter::Antialiasing);
+        const bool focusing = !m_focusTimelineId.isEmpty();
         for (const auto& e : m_seqEdges) {
             auto* a = m_eventById.value(e.first, nullptr);
             auto* b = m_eventById.value(e.second, nullptr);
             if (!a || !b) continue;
             QColor c = timelineColor(a->eventData().timelineId);
-            c.setAlpha(110);
+            int alpha = 110;
+            if (focusing) {
+                const bool lit = m_focusSet.contains(e.first)
+                              && m_focusSet.contains(e.second);
+                alpha = lit ? 110 : 26;
+            }
+            c.setAlpha(alpha);
             painter->setPen(QPen(c, 1.6));
             painter->drawLine(a->pos(), b->pos());
         }
@@ -529,13 +894,16 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
     QFont f; f.setPointSizeF(8.0); f.setBold(true);
     painter->setFont(f);
 
+    const bool focusing = !m_focusTimelineId.isEmpty();
     for (int i = 0; i < sorted.size(); ++i) {
         const qreal y = railY(i);
         if (y < rect.top() - 20 || y > rect.bottom() + 20) continue;
         const QColor c = sorted[i].color;
+        // Faixa focada fica plena; as demais esmaecem (mas seguem visíveis).
+        const qreal mult = (!focusing || sorted[i].id == m_focusTimelineId) ? 1.0 : 0.32;
 
         // linha-guia da faixa
-        QColor line = c; line.setAlpha(70);
+        QColor line = c; line.setAlpha(int(70 * mult));
         painter->setPen(QPen(line, 2.0));
         painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
 
@@ -543,11 +911,11 @@ void TimelineScene::drawBackground(QPainter* painter, const QRectF& rect)
         const QString name = sorted[i].name.isEmpty() ? tr("Linha") : sorted[i].name;
         const qreal lx = rect.left() + 10.0;
         const QRectF tagR(lx, y - 26, painter->fontMetrics().horizontalAdvance(name) + 18, 18);
-        QColor tagBg = c; tagBg.setAlpha(40);
+        QColor tagBg = c; tagBg.setAlpha(int(40 * mult));
         painter->setPen(Qt::NoPen);
         painter->setBrush(tagBg);
         painter->drawRoundedRect(tagR, 9, 9);
-        QColor txt = c.lighter(160);
+        QColor txt = c.lighter(160); txt.setAlphaF(mult);
         painter->setPen(txt);
         painter->drawText(tagR.adjusted(9, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, name);
     }

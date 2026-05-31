@@ -154,6 +154,11 @@ private:
                            const QPoint& spawnGlobal);
     void createDocFromBond(const QString& drawerKey, const QString& bondId);
     void createDocFromSelection();
+    void createTimelineEventFromSelection();
+    TimelinePanel* ensureTimelinePanel();  // cria o painel (lazy) e devolve
+    // Texto puro de um doc do projeto p/ a descrição de um evento da timeline.
+    // linkKey: "ch:<id>" | "sc:<id>" | "doc:<id>". Trunca em ~600 palavras + aviso.
+    QString docTextForLink(const QString& linkKey);
     void navigateAdjacentChapter(int dir);
     void activateNavZone(int dir, const EditorHost::ViewMode& vm);
     void deactivateNavZone();

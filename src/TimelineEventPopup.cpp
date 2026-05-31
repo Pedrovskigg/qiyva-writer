@@ -1,5 +1,6 @@
 #include "TimelineEventPopup.h"
 
+#include "ProjectModel.h"
 #include "Theme.h"
 
 #include <QColorDialog>
@@ -35,8 +36,9 @@ QPixmap colorPixmap(const QColor& c, int sz = 18)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TimelineEventPopup::TimelineEventPopup(const QList<TimelineDef>& timelines,
+                                       ProjectModel* model,
                                        QWidget* parent)
-    : QDialog(parent, Qt::Dialog), m_timelines(timelines)
+    : QDialog(parent, Qt::Dialog), m_timelines(timelines), m_model(model)
 {
     setWindowTitle(tr("Evento da linha do tempo"));
     setMinimumWidth(380);
@@ -76,6 +78,55 @@ void TimelineEventPopup::buildUi(const QList<TimelineDef>& timelines)
     m_desc->setMinimumHeight(80);
     m_desc->setMaximumHeight(160);
     root->addWidget(m_desc);
+
+    // ── Vincular a (capítulo / cena / doc de gaveta) ──────────────────────────
+    if (m_model) {
+        auto* linkLabel = new QLabel(tr("Vincular a:"), this);
+        linkLabel->setObjectName(QStringLiteral("tlPopupSectionLabel"));
+        root->addWidget(linkLabel);
+
+        m_linkCombo = new QComboBox(this);
+        m_linkCombo->addItem(tr("(sem vínculo)"), QString());
+        // role extra p/ guardar só o título do alvo (auto-preenche o Título)
+        constexpr int TitleRole = Qt::UserRole + 1;
+        for (const auto& ch : m_model->chapters()) {
+            const QString ct = ch.title.isEmpty() ? tr("Capítulo") : ch.title;
+            m_linkCombo->addItem(tr("Capítulo — %1").arg(ct),
+                                 QStringLiteral("ch:%1").arg(ch.id));
+            m_linkCombo->setItemData(m_linkCombo->count() - 1, ct, TitleRole);
+            for (int i = 0; i < ch.scenes.size(); ++i) {
+                const Scene& sc = ch.scenes[i];
+                const QString st = sc.title.isEmpty() ? tr("Cena %1").arg(i + 1) : sc.title;
+                m_linkCombo->addItem(tr("    Cena — %1 / %2").arg(ct, st),
+                                     QStringLiteral("sc:%1").arg(sc.id));
+                m_linkCombo->setItemData(m_linkCombo->count() - 1, st, TitleRole);
+            }
+        }
+        for (const auto& d : m_model->drawers()) {
+            const QString dt = d.title.isEmpty() ? tr("Gaveta") : d.title;
+            for (const auto& it : d.items) {
+                const QString itt = it.title.isEmpty() ? tr("(sem nome)") : it.title;
+                m_linkCombo->addItem(tr("Doc — %1 / %2").arg(dt, itt),
+                                     QStringLiteral("doc:%1").arg(it.id));
+                m_linkCombo->setItemData(m_linkCombo->count() - 1, itt, TitleRole);
+            }
+        }
+        // ao escolher um vínculo: herda título e conteúdo do alvo (se vazios)
+        connect(m_linkCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int) {
+            const QString key = m_linkCombo->currentData().toString();
+            if (key.isEmpty()) return;
+            if (m_title && m_title->text().trimmed().isEmpty()) {
+                const QString t = m_linkCombo->currentData(Qt::UserRole + 1).toString();
+                if (!t.isEmpty()) m_title->setText(t);
+            }
+            if (m_desc && m_desc->toPlainText().trimmed().isEmpty() && m_docTextResolver) {
+                const QString body = m_docTextResolver(key);
+                if (!body.isEmpty()) m_desc->setPlainText(body);
+            }
+        });
+        root->addWidget(m_linkCombo);
+    }
 
     // ── Timeline ─────────────────────────────────────────────────────────────
     if (!timelines.isEmpty()) {
@@ -161,6 +212,29 @@ void TimelineEventPopup::setEventData(const TimelineEvent& e)
             }
         }
     }
+
+    if (m_linkCombo) {
+        int sel = 0;
+        for (int i = 1; i < m_linkCombo->count(); ++i) {
+            const QString k  = m_linkCombo->itemData(i).toString();
+            const QString id = k.mid(k.indexOf(QChar(':')) + 1);
+            const bool isScene = k.startsWith(QStringLiteral("sc:"));
+            if ((isScene  && !e.linkedSceneId.isEmpty() && id == e.linkedSceneId)
+             || (!isScene && !e.linkedDocId.isEmpty()   && id == e.linkedDocId)) {
+                sel = i; break;
+            }
+        }
+        // vínculo que não casa com a lista (ex.: evento auto com chave "ch:ms:chId"):
+        // preserva como entrada sintética p/ não apagar ao salvar.
+        if (sel == 0 && (!e.linkedSceneId.isEmpty() || !e.linkedDocId.isEmpty())) {
+            const QString keep = !e.linkedSceneId.isEmpty()
+                ? QStringLiteral("sc:%1").arg(e.linkedSceneId)
+                : QStringLiteral("doc:%1").arg(e.linkedDocId);
+            m_linkCombo->addItem(tr("(vínculo atual)"), keep);
+            sel = m_linkCombo->count() - 1;
+        }
+        m_linkCombo->setCurrentIndex(sel);
+    }
 }
 
 TimelineEvent TimelineEventPopup::eventData() const
@@ -173,6 +247,13 @@ TimelineEvent TimelineEventPopup::eventData() const
     e.color       = m_color;
     if (m_timelineCombo)
         e.timelineId = m_timelineCombo->currentData().toString();
+    if (m_linkCombo) {
+        const QString k = m_linkCombo->currentData().toString();
+        if (k.startsWith(QStringLiteral("sc:")))
+            e.linkedSceneId = k.mid(k.indexOf(QChar(':')) + 1);
+        else if (!k.isEmpty())  // ch: ou doc:
+            e.linkedDocId = k.mid(k.indexOf(QChar(':')) + 1);
+    }
     return e;
 }
 

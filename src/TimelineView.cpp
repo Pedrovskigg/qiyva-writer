@@ -61,6 +61,14 @@ void TimelineView::fitAll()
     emit zoomChanged(m_zoom);
 }
 
+void TimelineView::scrollToRailStart()
+{
+    // alinha a cena x≈-16 à esquerda do viewport (rótulos + 1º evento à vista)
+    const qreal curLeft = mapToScene(0, 0).x();
+    const int deltaPx = qRound((curLeft - (-16.0)) * m_zoom);
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() - deltaPx);
+}
+
 void TimelineView::wheelEvent(QWheelEvent* event)
 {
     // Mesma regra da Lousa: se o cursor estiver sobre um evento expandido com
@@ -96,8 +104,10 @@ void TimelineView::mousePressEvent(QMouseEvent* event)
     const bool isMiddle = (event->button() == Qt::MiddleButton);
     const bool isBgLeft = (event->button() == Qt::LeftButton) && !itemAt(event->pos());
     if (isMiddle || isBgLeft) {
-        m_panning = true;
-        m_panLast = event->pos();
+        m_panning  = true;
+        m_panMoved = false;
+        m_panLast  = event->pos();
+        m_pressPos = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
@@ -108,6 +118,8 @@ void TimelineView::mousePressEvent(QMouseEvent* event)
 void TimelineView::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_panning) {
+        if ((event->pos() - m_pressPos).manhattanLength() > 4)
+            m_panMoved = true;
         const QPoint delta = event->pos() - m_panLast;
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
         verticalScrollBar()->setValue(verticalScrollBar()->value()   - delta.y());
@@ -123,6 +135,9 @@ void TimelineView::mouseReleaseEvent(QMouseEvent* event)
     if (m_panning && (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton)) {
         m_panning = false;
         setCursor(Qt::ArrowCursor);
+        // press+release no fundo sem arrastar (botão esquerdo) = clique de foco
+        if (!m_panMoved && event->button() == Qt::LeftButton)
+            emit bgClicked(mapToScene(event->pos()), event->modifiers());
         event->accept();
         return;
     }
