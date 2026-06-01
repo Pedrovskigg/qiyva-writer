@@ -3137,7 +3137,7 @@ void Manager::loadBundled()
         // página brilha como uma tela ligada. Terminal retrô puro.
         MiraTheme t;
         t.id = QStringLiteral("phosphor");
-        t.name = QStringLiteral("Fósforo");
+        t.name = QStringLiteral("Terminal");
         t.bundled = true;
         t.appBackground = QStringLiteral("#020602");
         t.panelBackground = QStringLiteral("#07120a");
@@ -3178,7 +3178,7 @@ void Manager::loadBundled()
         // breu, brilho de tela de aeroporto antigo.
         MiraTheme t;
         t.id = QStringLiteral("phosphor-amber");
-        t.name = QStringLiteral("Fósforo Âmbar");
+        t.name = QStringLiteral("Terminal Âmbar");
         t.bundled = true;
         t.appBackground = QStringLiteral("#060402");
         t.panelBackground = QStringLiteral("#14100a");
