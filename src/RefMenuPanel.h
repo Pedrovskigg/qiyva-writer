@@ -96,8 +96,7 @@ private:
     void buildDrawerView();
     void buildSearchAllView();
     void buildPlaceholderView(const QString& title, const QString& subtitle);
-    void buildMemoriesView();           // memórias do projeto (aba do topo)
-    void rebuildCharMemories();         // memórias do personagem no preview
+    void buildMemoriesView();           // todas as memórias + filtro (aba do topo)
     QWidget* buildMemoryRow(const QString& memId, const QString& title,
                             const QString& text, QWidget* parent);
     void rebuildPreview();
@@ -188,13 +187,8 @@ private:
     QTextBrowser* m_preview = nullptr;
     QLabel* m_previewPlaceholder = nullptr;
 
-    // Memórias do personagem dentro do preview (quando o doc selecionado é um
-    // personagem): um botão que alterna a lista das memórias dele.
-    QToolButton* m_charMemBtn = nullptr;
-    QWidget* m_charMemBox = nullptr;
-    QVBoxLayout* m_charMemLay = nullptr;
-    bool m_charMemVisible = false;
-    QString m_charMemElementId;   // personagem do doc atualmente no preview
+    // Filtro da aba de Memórias: "all" | "project" | <elementId de personagem>.
+    QString m_memFilter = QStringLiteral("all");
 
     // drag/resize
     bool m_dragging = false;

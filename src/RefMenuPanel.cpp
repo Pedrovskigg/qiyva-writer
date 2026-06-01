@@ -350,34 +350,6 @@ void RefMenuPanel::buildUi()
     m_previewRole->setVisible(false);
     pvLay->addWidget(m_previewRole);
 
-    // Botão + lista de memórias do personagem (só visível em doc de personagem).
-    m_charMemBtn = new QToolButton(m_previewWrap);
-    m_charMemBtn->setObjectName(QStringLiteral("refCharMemBtn"));
-    m_charMemBtn->setCursor(Qt::PointingHandCursor);
-    m_charMemBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    m_charMemBtn->setStyleSheet(QStringLiteral(
-        "QToolButton#refCharMemBtn {"
-        "  background: %1; color: %2; border: 1px solid %3;"
-        "  border-radius: 6px; padding: 4px 10px; font-size: 11px; text-align: left;"
-        "}"
-        "QToolButton#refCharMemBtn:hover { color: %4; border-color: %5; }"
-    ).arg(Theme::appBackground(), Theme::textPrimary(), Theme::panelBorder(),
-          Theme::textBright(), Theme::accentDefault()));
-    m_charMemBtn->setVisible(false);
-    connect(m_charMemBtn, &QToolButton::clicked, this, [this]() {
-        m_charMemVisible = !m_charMemVisible;
-        rebuildCharMemories();
-    });
-    pvLay->addWidget(m_charMemBtn);
-
-    m_charMemBox = new QWidget(m_previewWrap);
-    m_charMemBox->setObjectName(QStringLiteral("refCharMemBox"));
-    m_charMemLay = new QVBoxLayout(m_charMemBox);
-    m_charMemLay->setContentsMargins(0, 0, 0, 0);
-    m_charMemLay->setSpacing(6);
-    m_charMemBox->setVisible(false);
-    pvLay->addWidget(m_charMemBox);
-
     m_previewImagesScroll = new QScrollArea(m_previewWrap);
     m_previewImagesScroll->setObjectName(QStringLiteral("refImagesScroll"));
     m_previewImagesScroll->setWidgetResizable(true);
@@ -1389,18 +1361,101 @@ void RefMenuPanel::buildMemoriesView()
 {
     if (!m_navInner || !m_navInnerLay) return;
 
-    auto* title = new QLabel(tr("MEMÓRIAS DO PROJETO"), m_navInner);
-    title->setStyleSheet(QStringLiteral("color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:6px 6px 2px;")
-                             .arg(Theme::textMuted()));
-    m_navInnerLay->addWidget(title);
+    const QVector<MemoriesStore::Memory> all =
+        m_memories ? m_memories->memories() : QVector<MemoriesStore::Memory>();
 
-    const QVector<MemoriesStore::Memory> mems =
-        m_memories ? m_memories->projectMemories() : QVector<MemoriesStore::Memory>();
+    // Nome de um personagem a partir do elementId (via ElementsStore).
+    auto charName = [this](const QString& elId) -> QString {
+        if (m_elements) {
+            if (const Element* el = m_elements->findElement(elId))
+                if (!el->name.isEmpty()) return el->name;
+        }
+        return tr("Personagem");
+    };
 
-    if (mems.isEmpty()) {
+    // Rótulo do filtro atual.
+    QString filterLabel = tr("Todas");
+    if (m_memFilter == QStringLiteral("project")) filterLabel = tr("Do projeto");
+    else if (m_memFilter != QStringLiteral("all")) filterLabel = charName(m_memFilter);
+
+    // ---- Botão de filtro (abre um menu) ----
+    auto* filterBtn = new QToolButton(m_navInner);
+    filterBtn->setObjectName(QStringLiteral("refMemFilterBtn"));
+    filterBtn->setCursor(Qt::PointingHandCursor);
+    filterBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    filterBtn->setText(tr("Filtro: %1  ▾").arg(filterLabel));
+    filterBtn->setStyleSheet(QStringLiteral(
+        "QToolButton#refMemFilterBtn {"
+        "  background: %1; color: %2; border: 1px solid %3;"
+        "  border-radius: 6px; padding: 5px 10px; font-size: 11px; text-align: left;"
+        "}"
+        "QToolButton#refMemFilterBtn:hover { color: %4; border-color: %5; }"
+    ).arg(Theme::appBackground(), Theme::textPrimary(), Theme::panelBorder(),
+          Theme::textBright(), Theme::accentDefault()));
+    {
+        QIcon ic = IconUtils::loadToolbarIcon(QStringLiteral(":/icons/search.svg"),
+            QColor(Theme::textMuted()), QColor(Theme::textBright()), QColor(Theme::textBright()),
+            QSize(13, 13));
+        if (!ic.isNull()) filterBtn->setIcon(ic);
+    }
+    filterBtn->setPopupMode(QToolButton::InstantPopup);
+
+    auto* menu = new QMenu(filterBtn);
+    menu->setStyleSheet(QStringLiteral(R"(
+        QMenu { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; padding: 4px; }
+        QMenu::item { padding: 5px 18px; border-radius: 4px; }
+        QMenu::item:selected { background: %4; color: %5; }
+        QMenu::separator { height: 1px; background: %3; margin: 4px 6px; }
+    )").arg(Theme::panelBackground(), Theme::textPrimary(), Theme::panelBorder(),
+            Theme::accentInfoSoft(), Theme::textBright()));
+    auto addFilter = [this, menu](const QString& label, const QString& value) {
+        QAction* a = menu->addAction(label);
+        a->setCheckable(true);
+        a->setChecked(m_memFilter == value);
+        connect(a, &QAction::triggered, this, [this, value]() {
+            m_memFilter = value;
+            rebuildNavBody();
+        });
+    };
+    addFilter(tr("Todas as memórias"), QStringLiteral("all"));
+    addFilter(tr("Memórias do projeto"), QStringLiteral("project"));
+    // Personagens que têm ao menos uma memória.
+    QStringList seen;
+    for (const MemoriesStore::Memory& m : all) {
+        if (m.targetType == QStringLiteral("character") && !m.elementId.isEmpty()
+            && !seen.contains(m.elementId)) {
+            seen.append(m.elementId);
+        }
+    }
+    if (!seen.isEmpty()) {
+        menu->addSeparator();
+        for (const QString& elId : seen)
+            addFilter(tr("Memórias de %1").arg(charName(elId)), elId);
+    }
+    filterBtn->setMenu(menu);
+    m_navInnerLay->addWidget(filterBtn);
+
+    // ---- Lista filtrada ----
+    QVector<MemoriesStore::Memory> list;
+    for (const MemoriesStore::Memory& m : all) {
+        if (m_memFilter == QStringLiteral("all")) list.append(m);
+        else if (m_memFilter == QStringLiteral("project")) {
+            if (m.targetType != QStringLiteral("character")) list.append(m);
+        } else if (m.targetType == QStringLiteral("character") && m.elementId == m_memFilter) {
+            list.append(m);
+        }
+    }
+    std::sort(list.begin(), list.end(),
+              [](const MemoriesStore::Memory& a, const MemoriesStore::Memory& b) {
+                  return a.createdAt > b.createdAt;
+              });
+
+    if (list.isEmpty()) {
         auto* empty = new QLabel(
-            tr("Nenhuma memória do projeto ainda. Selecione um trecho no editor e "
-               "escolha \"Adicionar à memória…\" na barra de seleção."),
+            m_memFilter == QStringLiteral("all")
+                ? tr("Nenhuma memória ainda. Selecione um trecho no editor e escolha "
+                     "\"Adicionar à memória…\" na barra de seleção.")
+                : tr("Nenhuma memória neste filtro."),
             m_navInner);
         empty->setStyleSheet(QStringLiteral("color:%1; font-size:12px; padding:8px 6px;")
                                  .arg(Theme::textMuted()));
@@ -1409,62 +1464,18 @@ void RefMenuPanel::buildMemoriesView()
         return;
     }
 
-    for (const MemoriesStore::Memory& m : mems) {
+    for (const MemoriesStore::Memory& m : list) {
+        // Cabeçalho: nome (se houver) senão "Memória do <fonte>". No modo
+        // "Todas", anexa o personagem quando a memória é de um.
         QString header = m.name.isEmpty()
             ? (m.sourceLabel.isEmpty() ? tr("Memória") : tr("Memória do %1").arg(m.sourceLabel))
-            : m.name;
-        // Quando há nome E fonte, mostra a fonte como complemento.
-        if (!m.name.isEmpty() && !m.sourceLabel.isEmpty())
-            header = tr("%1  ·  %2").arg(m.name, m.sourceLabel);
+            : (m.sourceLabel.isEmpty() ? m.name : tr("%1  ·  %2").arg(m.name, m.sourceLabel));
+        if (m_memFilter == QStringLiteral("all")
+            && m.targetType == QStringLiteral("character") && !m.elementId.isEmpty()) {
+            header = tr("[%1]  %2").arg(charName(m.elementId), header);
+        }
         m_navInnerLay->addWidget(buildMemoryRow(m.id, header, m.text, m_navInner));
     }
-}
-
-void RefMenuPanel::rebuildCharMemories()
-{
-    if (!m_charMemBtn || !m_charMemBox || !m_charMemLay) return;
-
-    // Limpa a lista anterior.
-    while (m_charMemLay->count() > 0) {
-        QLayoutItem* item = m_charMemLay->takeAt(0);
-        if (auto* w = item->widget()) w->deleteLater();
-        delete item;
-    }
-
-    if (m_charMemElementId.isEmpty()) {
-        m_charMemBtn->setVisible(false);
-        m_charMemBox->setVisible(false);
-        return;
-    }
-
-    const QVector<MemoriesStore::Memory> mems =
-        m_memories ? m_memories->characterMemories(m_charMemElementId)
-                   : QVector<MemoriesStore::Memory>();
-
-    m_charMemBtn->setVisible(true);
-    const QString arrow = m_charMemVisible ? QStringLiteral("▾") : QStringLiteral("▸");
-    m_charMemBtn->setText(tr(" %1  Memórias do personagem (%2)").arg(arrow).arg(mems.size()));
-
-    if (!m_charMemVisible) {
-        m_charMemBox->setVisible(false);
-        return;
-    }
-
-    if (mems.isEmpty()) {
-        auto* empty = new QLabel(tr("Nenhuma memória salva para este personagem."), m_charMemBox);
-        empty->setStyleSheet(QStringLiteral("color:%1; font-size:11px; padding:2px;")
-                                 .arg(Theme::textMuted()));
-        empty->setWordWrap(true);
-        m_charMemLay->addWidget(empty);
-    } else {
-        for (const MemoriesStore::Memory& m : mems) {
-            const QString header = m.name.isEmpty()
-                ? (m.sourceLabel.isEmpty() ? tr("Memória") : tr("Memória do %1").arg(m.sourceLabel))
-                : m.name;
-            m_charMemLay->addWidget(buildMemoryRow(m.id, header, m.text, m_charMemBox));
-        }
-    }
-    m_charMemBox->setVisible(true);
 }
 
 // =========================================================================
@@ -1496,7 +1507,6 @@ void RefMenuPanel::rebuildPreview()
     // Resolve título e role
     QString title;
     QString role;
-    QString charElementId;   // preenchido se o doc selecionado for um personagem
     if (m_selectedKey.startsWith(QStringLiteral("ch:"))) {
         const QStringList parts = m_selectedKey.split(QLatin1Char(':'));
         if (parts.size() >= 3 && m_model) {
@@ -1519,17 +1529,8 @@ void RefMenuPanel::rebuildPreview()
         if (it) {
             title = it->title;
             role = roleOrLabelForItem(*it);
-            if (it->elementType == QStringLiteral("character") && !it->elementId.isEmpty())
-                charElementId = it->elementId;
         }
     }
-
-    // Memórias do personagem: muda o doc → reseta o toggle e repovoa.
-    if (charElementId != m_charMemElementId) {
-        m_charMemElementId = charElementId;
-        m_charMemVisible = false;
-    }
-    rebuildCharMemories();
 
     m_previewTitle->setText(title.isEmpty() ? tr("(sem título)") : title);
     m_previewTitle->setVisible(true);
