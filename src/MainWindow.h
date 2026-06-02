@@ -85,10 +85,12 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     void setupEditor();
     void setupToolbar();
+    void updateEditorContainerMargins();
     void applyEditorStyle();
     void applyTextColor();
     void applyEditorFont();
@@ -126,6 +128,10 @@ private:
     void onEditorLayoutChanged();
     void applyEditorLayout();
     void resizeEditorColumnToViewport();
+    // Altura útil da "folha" visível (viewport do editorScroll menos elementos
+    // fora da folha). É o teto natural do comprimento de página: acima disso a
+    // folha seria cortada fora da janela.
+    int availableSheetHeight() const;
     void applyPageShadow();
     void applyBackgroundFromTheme();
     void applySpellLanguageFromModel();

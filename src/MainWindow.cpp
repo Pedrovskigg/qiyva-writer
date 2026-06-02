@@ -3,6 +3,16 @@
 #include "MainMenuDialog.h"
 #include "NewProjectFlow.h"
 
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#endif
+
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
@@ -281,17 +291,18 @@ MainWindow::MainWindow(QWidget *parent)
     baseWindowTitle = tr("Mira Writing");
     setWindowTitle(baseWindowTitle);
 
-    // Toolbar flutuante: holder com margem em volta da TopToolbar
+    // Toolbar flutuante: filho direto de this, posicionado sobre o centralWidget.
+    // Sem setMenuWidget — o centralWidget ocupa a janela inteira (incluindo atrás
+    // da toolbar), permitindo que a página vaze 100% até o topo.
     auto *holder = new QWidget(this);
     holder->setObjectName(QStringLiteral("topToolbarHolder"));
     holder->setAttribute(Qt::WA_StyledBackground, true);
     holder->setStyleSheet(QStringLiteral("#topToolbarHolder { background: %1; }").arg(Theme::appBackground()));
     toolbarHolder = holder;
     auto *holderLayout = new QHBoxLayout(holder);
-    holderLayout->setContentsMargins(12, 10, 12, 4);
+    holderLayout->setContentsMargins(12, 0, 12, 4);
     holderLayout->setSpacing(0);
     holderLayout->addWidget(toolbar);
-    setMenuWidget(holder);
     toolbar->installEventFilter(this); // auto-hide da toolbar no modo focado
 
     resize(1100, 800);
@@ -1059,6 +1070,14 @@ void MainWindow::setupEditor()
         setFocusMode(!focusModeEnabled);
     });
 
+    // F11 → toggle Fullscreen.
+    auto* fullscreenShortcut = new QShortcut(QKeySequence(Qt::Key_F11), this);
+    connect(fullscreenShortcut, &QShortcut::activated, this, [this]() {
+        const bool entering = !isFullScreen();
+        if (entering) showFullScreen(); else showMaximized();
+        if (toolbar) toolbar->setFullscreenChecked(entering);
+    });
+
     // Shift+PageDown / Shift+PageUp → próximo/anterior capítulo ou drawer item.
     // (PageUp/Down "puros" foram preservados pro QTextEdit fazer scroll nativo.)
     auto navigateRelative = [this](int delta) {
@@ -1161,15 +1180,17 @@ void MainWindow::setupEditor()
     externalScrollBar->setPageStep(innerSb->pageStep());
     externalScrollBar->setSingleStep(innerSb->singleStep());
     externalScrollBar->setValue(innerSb->value());
-    connect(innerSb, &QAbstractSlider::rangeChanged, externalScrollBar, &QScrollBar::setRange);
-    connect(innerSb, &QAbstractSlider::valueChanged, externalScrollBar, &QScrollBar::setValue);
-    connect(externalScrollBar, &QAbstractSlider::valueChanged, innerSb, &QScrollBar::setValue);
-    // pageStep/singleStep podem mudar quando a fonte ou tamanho do widget muda;
-    // re-sincroniza sob demanda.
-    connect(innerSb, &QAbstractSlider::actionTriggered, this, [this, innerSb]() {
+    // rangeChanged dispara depois que o editor recalcula o layout do documento
+    // (mudança de conteúdo, fonte, ou tamanho do widget). É o momento certo pra
+    // re-sincronizar range E pageStep/singleStep — daí o thumb fica sempre
+    // proporcional ao conteúdo real.
+    connect(innerSb, &QAbstractSlider::rangeChanged, this, [this, innerSb]() {
+        externalScrollBar->setRange(innerSb->minimum(), innerSb->maximum());
         externalScrollBar->setPageStep(innerSb->pageStep());
         externalScrollBar->setSingleStep(innerSb->singleStep());
     });
+    connect(innerSb, &QAbstractSlider::valueChanged, externalScrollBar, &QScrollBar::setValue);
+    connect(externalScrollBar, &QAbstractSlider::valueChanged, innerSb, &QScrollBar::setValue);
 
     // Drag da scrollbar: ativa a zona de nav só enquanto o handle está pressionado
     // na borda. Soltar o handle cancela o carregamento se ele ainda não disparou.
@@ -1265,6 +1286,14 @@ void MainWindow::setupEditor()
     applyEditorLayout();
 
     setCentralWidget(container);
+
+    // Toolbar flutua sobre o centralWidget: posicionar e levantar depois do
+    // setCentralWidget, senão o resize do central a empurra pra baixo.
+    if (toolbarHolder) {
+        toolbarHolder->setGeometry(0, 0, width(), toolbarHolder->sizeHint().height());
+        toolbarHolder->raise();
+    }
+    updateEditorContainerMargins();
 
     // Painéis laterais flutuantes: ficam acima do conteúdo, à direita da LeftBar.
     drawerListPanel->raise();
@@ -2017,6 +2046,9 @@ void MainWindow::setupToolbar()
     connect(toolbar, &TopToolbar::paragraphSpacingBeforeChanged, this, &MainWindow::setParagraphSpacingBefore);
     connect(toolbar, &TopToolbar::paragraphSpacingAfterChanged, this, &MainWindow::setParagraphSpacingAfter);
     connect(toolbar, &TopToolbar::focusModeToggled, this, &MainWindow::setFocusMode);
+    connect(toolbar, &TopToolbar::fullscreenToggled, this, [this](bool enabled) {
+        if (enabled) showFullScreen(); else showMaximized();
+    });
     connect(toolbar, &TopToolbar::readModeToggled, this, &MainWindow::setReadMode);
     connect(toolbar, &TopToolbar::addImageRequested, this, &MainWindow::onAddImageRequested);
     connect(toolbar, &TopToolbar::mainMenuRequested, this, &MainWindow::openMainMenu);
@@ -2442,14 +2474,9 @@ void MainWindow::setReadMode(bool enabled)
     if (leftBar) leftBar->clearSelection();
 
     if (enabled) {
-        // Toolbar e LeftBar continuam ocupando o MESMO espaço (editor ancorado,
-        // não se mexe), mas o conteúdo some e o fundo fica transparente —
-        // deixando a imagem do tema aparecer no lugar, sem faixa sólida.
-        if (toolbarHolder && toolbar) {
-            savedHolderHeight = toolbarHolder->height();
-            toolbarHolder->setFixedHeight(savedHolderHeight); // não colapsa ao esconder
-            toolbar->hide();
-        }
+        // Toolbar flutuante: esconder o holder inteiro libera o topo da janela.
+        if (toolbarHolder) toolbarHolder->hide();
+        updateEditorContainerMargins();
         if (leftBar) leftBar->setChromeHidden(true);
         if (wordCountPanel) wordCountPanel->hide();
 
@@ -2470,11 +2497,11 @@ void MainWindow::setReadMode(bool enabled)
         if (readModeHotTop) { readModeHotTop->show(); readModeHotTop->raise(); }
         if (readModeHotLeft) { readModeHotLeft->show(); readModeHotLeft->raise(); }
     } else {
-        if (toolbarHolder && toolbar) {
-            toolbar->show();
-            toolbarHolder->setMinimumHeight(0);
-            toolbarHolder->setMaximumHeight(QWIDGETSIZE_MAX);
+        if (toolbarHolder) {
+            toolbarHolder->show();
+            toolbarHolder->raise();
         }
+        updateEditorContainerMargins();
         if (leftBar) leftBar->setChromeHidden(false);
         if (wordCountPanel && hasProjectLoaded()) {
             wordCountPanel->show();
@@ -2597,7 +2624,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     // já reservado, sem reflow); sair da barra a esconde de novo.
     if (readModeEnabled) {
         if (watched == readModeHotTop && event->type() == QEvent::Enter) {
-            if (toolbar) toolbar->show();
+            if (toolbarHolder) { toolbarHolder->show(); toolbarHolder->raise(); }
             return false;
         }
         if (watched == readModeHotLeft && event->type() == QEvent::Enter) {
@@ -2607,7 +2634,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (toolbar && watched == toolbar && event->type() == QEvent::Leave) {
             const QPoint g = QCursor::pos();
             if (!toolbar->rect().contains(toolbar->mapFromGlobal(g)))
-                toolbar->hide();
+                if (toolbarHolder) toolbarHolder->hide();
         }
         if (leftBar && watched == leftBar && event->type() == QEvent::Leave) {
             const QPoint g = QCursor::pos();
@@ -3425,10 +3452,11 @@ void MainWindow::positionFindBar()
     if (!findBar || !editorContainer) return;
     findBar->adjustSize();
     const int margin = 12;
+    const int tbH = (toolbarHolder && toolbarHolder->isVisible()) ? toolbarHolder->height() : 0;
     const int w = qMax(360, findBar->sizeHint().width());
     findBar->resize(w, findBar->height());
     const int x = editorContainer->width() - w - margin;
-    const int y = margin;
+    const int y = tbH + margin;
     findBar->move(qMax(margin, x), y);
     if (findBar->isVisible()) findBar->raise();
 }
@@ -3438,11 +3466,12 @@ void MainWindow::positionGlobalSearchPanel()
     if (!globalSearchPanel || !editorContainer) return;
     globalSearchPanel->adjustSize();
     const int margin = 12;
+    const int tbH = (toolbarHolder && toolbarHolder->isVisible()) ? toolbarHolder->height() : 0;
     const int w = globalSearchPanel->width();
-    const int h = qMin(520, editorContainer->height() - margin * 2);
+    const int h = qMin(520, editorContainer->height() - tbH - margin * 2);
     globalSearchPanel->resize(w, h);
     const int x = qMax(margin, (editorContainer->width() - w) / 2);
-    const int y = margin + 8;
+    const int y = tbH + margin + 8;
     globalSearchPanel->move(x, y);
     if (globalSearchPanel->isVisible()) globalSearchPanel->raise();
 }
@@ -3495,14 +3524,25 @@ void MainWindow::positionExternalScrollBar()
     QWidget* vp = editorScroll->viewport();
     // Coloca a scrollbar imediatamente à direita da página. Como a largura da
     // página é configurável, usamos mapTo para seguir a posição real do editorColumn.
-    const QPoint colRight    = editorColumn->mapTo(vp, QPoint(editorColumn->width(), 0));
+    const QPoint colRight      = editorColumn->mapTo(vp, QPoint(editorColumn->width(), 0));
     const QPoint vpInContainer = vp->mapTo(editorContainer, QPoint(0, 0));
     const int sbW = style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+
+    // O track tem altura FIXA (máx 800px), centralizado verticalmente na viewport
+    // — desacoplado do comprimento da página. Se ficasse do tamanho da página, com
+    // página comprida o fundo do track sairia da tela e arrastar até o fundo
+    // visível não chegava ao fim do conteúdo. O thumb deriva de range/pageStep do
+    // scroll interno do editor (que cobre o documento inteiro), então arrastar o
+    // thumb por todo o track de 800px percorre o documento todo, qualquer que seja
+    // o comprimento da página.
+    constexpr int kMaxScrollTrack = 800;
+    const int sbH = qMin(kMaxScrollTrack, vp->height());
+    const int sbY = vpInContainer.y() + (vp->height() - sbH) / 2;
     externalScrollBar->setGeometry(
         vpInContainer.x() + colRight.x(),
-        vpInContainer.y(),
+        sbY,
         sbW,
-        vp->height()
+        sbH
     );
     externalScrollBar->raise();
     positionAutoNavHint();
@@ -3533,9 +3573,10 @@ void MainWindow::positionSidePanels()
     QWidget* parent = drawerListPanel ? drawerListPanel->parentWidget() : nullptr;
     if (!parent) return;
     const int margin = 10;
+    const int tbH = (toolbarHolder && toolbarHolder->isVisible()) ? toolbarHolder->height() : 0;
     const int x = margin + leftBar->width() + margin;
-    const int y = margin;
-    const int maxH = qMax(0, parent->height() - margin * 2);
+    const int y = tbH + margin;
+    const int maxH = qMax(0, parent->height() - tbH - margin * 2);
 
     // DrawerListPanel: respeita altura escolhida pelo usuário (se houver),
     // só clampa pra caber. Senão, expande full-height (comportamento antigo).
@@ -3563,6 +3604,13 @@ void MainWindow::positionSidePanels()
     positionExternalScrollBar();
 }
 
+void MainWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange && toolbar)
+        toolbar->setFullscreenChecked(isFullScreen());
+}
+
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
@@ -3570,6 +3618,11 @@ void MainWindow::resizeEvent(QResizeEvent *event)
         backgroundWidget->setGeometry(rect());
         backgroundWidget->lower();
     }
+    if (toolbarHolder && toolbarHolder->isVisible()) {
+        toolbarHolder->setGeometry(0, 0, width(), toolbarHolder->sizeHint().height());
+        toolbarHolder->raise();
+    }
+    updateEditorContainerMargins();
     resizeEditorColumnToViewport();
     positionWordCountPanel();
     positionSidePanels();
@@ -3660,6 +3713,9 @@ void MainWindow::onSettingsRequested()
     settingsPanel->setDetectionMarkAll(detectionMarkAll);
     settingsPanel->setAutoNavEnabled(m_autoNavEnabled);
     settingsPanel->setMaxDocs(QSettings().value(QStringLiteral("docCache/maxDocs"), 6).toInt());
+    // Teto do comprimento de página = altura útil da folha visível. Acima disso a
+    // folha seria cortada fora da janela; no máximo, ela bate exatamente na tela.
+    settingsPanel->setPageHeightMaximum(availableSheetHeight());
 
     settingsPanel->show();
     settingsPanel->raise();
@@ -3701,6 +3757,19 @@ void MainWindow::onEditorLayoutChanged()
     applyPageShadow();
     positionSidePanels();
     positionWordCountPanel();
+}
+
+void MainWindow::updateEditorContainerMargins()
+{
+    if (!editorContainer) return;
+    auto* lay = qobject_cast<QHBoxLayout*>(editorContainer->layout());
+    if (!lay) return;
+    const int tbH = (toolbarHolder && toolbarHolder->isVisible())
+                    ? toolbarHolder->sizeHint().height() : 0;
+    // Sem respiro vertical: a folha começa colada na base da toolbar e vai até o
+    // fundo da janela. Assim, no comprimento máximo (ou "Tela cheia"), a página
+    // bate exatamente nos limites da janela — sem folgas em cima nem embaixo.
+    lay->setContentsMargins(10, tbH, 10, 0);
 }
 
 void MainWindow::applyEditorLayout()
@@ -3754,14 +3823,40 @@ void MainWindow::resizeEditorColumnToViewport()
     // conteúdo internamente). Comprimento fixo: a coluna usa a altura da folha
     // (+ barra de variação); o QScrollArea a centraliza verticalmente, e a
     // imagem de fundo aparece em volta.
+    // Espaço da coluna ocupado fora da "folha" (barra de variação, quando visível).
+    int extra = 0;
+    if (variationBar && variationBar->isVisible())
+        extra = variationBar->height() + 8 /* spacing do QVBoxLayout */;
+
     int colH;
     if (ph > 0) {
-        colH = editorColumn->sizeHint().height();
-        if (colH <= 0) colH = ph;
+        // Folha de altura fixa — mas NUNCA mais alta que a área visível. Um editor
+        // mais alto que a viewport rola o documento dentro de um viewport interno
+        // maior do que o que aparece na tela; o fim do documento fica renderizado
+        // na faixa do editor cortada fora da janela, e o thumb chega ao limite com
+        // conteúdo ainda embaixo. Limitar a folha à viewport mantém o scroll
+        // interno coerente com o visível.
+        const int avail = availableSheetHeight();
+        const int effPh = (avail > 0) ? qMin(ph, avail) : ph;
+        if (editor) editor->setFixedHeight(effPh);
+        // Altura da coluna = folha + extras. Calculada direto (NÃO via sizeHint):
+        // acabamos de mudar a altura fixa do editor e o sizeHint do layout ainda
+        // não recalculou — leria um valor velho e a coluna ficaria do tamanho
+        // errado (folha encolhida e centralizada, com folgas em cima e embaixo).
+        colH = effPh + extra;
     } else {
         colH = vpH;
     }
     editorColumn->resize(colW, colH);
+}
+
+int MainWindow::availableSheetHeight() const
+{
+    if (!editorScroll) return 0;
+    int extra = 0;
+    if (variationBar && variationBar->isVisible())
+        extra = variationBar->height() + 8 /* spacing do QVBoxLayout */;
+    return qMax(0, editorScroll->viewport()->height() - extra);
 }
 
 void MainWindow::applyPageShadow()
@@ -3810,6 +3905,16 @@ void MainWindow::applyBackgroundFromTheme()
             QStringLiteral("#topToolbarHolder { background: %1; }")
                 .arg(hasImage ? QStringLiteral("transparent") : Theme::appBackground()));
     }
+
+#ifdef Q_OS_WIN
+    {
+        const QColor bg(Theme::appBackground());
+        const COLORREF cr = RGB(bg.red(), bg.green(), bg.blue());
+        HWND hwnd = reinterpret_cast<HWND>(winId());
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &cr, sizeof(cr));
+        DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &cr, sizeof(cr));
+    }
+#endif
 }
 
 void MainWindow::applySpellLanguageFromModel()

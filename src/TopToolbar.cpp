@@ -557,6 +557,13 @@ void TopToolbar::setFocusModeChecked(bool checked)
     focusButton->setIcon(checked ? focusOnIcon : focusOffIcon);
 }
 
+void TopToolbar::setFullscreenChecked(bool checked)
+{
+    if (!fullscreenButton) return;
+    QSignalBlocker block(fullscreenButton);
+    fullscreenButton->setChecked(checked);
+}
+
 void TopToolbar::setParagraphSpacingBefore(int px)
 {
     currentParaSpaceBefore = qBound(0, px, 32);

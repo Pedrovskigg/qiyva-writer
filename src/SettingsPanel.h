@@ -35,6 +35,10 @@ public:
     int maxDocs() const;
     void setMaxDocs(int n);
 
+    // Teto do slider de comprimento de página (px). Acima disso a folha seria
+    // cortada fora da janela; no máximo ela bate exatamente na tela.
+    void setPageHeightMaximum(int px);
+
 signals:
     void spellEnabledChanged(bool enabled);
     void spellLanguageChanged(const QString& code);
@@ -47,6 +51,7 @@ private:
     void onCheckToggled(bool checked);
     void onLanguageChanged(int index);
     void syncPageLayoutFromManager();
+    QString pageHeightLabelText(int v) const;
     void applyTheme();
 
     QCheckBox* m_spellCheck;

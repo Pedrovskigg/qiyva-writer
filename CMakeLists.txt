@@ -180,6 +180,10 @@ target_link_libraries(mira-writing PRIVATE
     hunspell
 )
 
+if(WIN32)
+    target_link_libraries(mira-writing PRIVATE dwmapi)
+endif()
+
 target_compile_definitions(mira-writing PRIVATE
     DEV_ASSETS_DIR="${CMAKE_SOURCE_DIR}/src/assets"
 )

@@ -15,6 +15,12 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+namespace {
+// Menor folha de altura fixa oferecida pelo slider. Abaixo disso vira inútil;
+// o extremo direito do slider é "Tela cheia" (preenche a janela).
+constexpr int kMinSheetHeight = 240;
+}
+
 SettingsPanel::SettingsPanel(QWidget* parent)
     : QDialog(parent)
     , m_spellCheck(new QCheckBox(tr("Ativar corretor ortográfico"), this))
@@ -86,7 +92,9 @@ SettingsPanel::SettingsPanel(QWidget* parent)
 
     m_pageWidthSlider = makeSlider(EditorLayout::Manager::minPageWidth(),
                                    EditorLayout::Manager::maxPageWidth(), 20);
-    m_pageHeightSlider = makeSlider(EditorLayout::Manager::minPageHeight(),
+    // O comprimento vai de uma folha curta (kMinSheetHeight) até o extremo direito,
+    // que significa "Tela cheia" (preenche a janela dinamicamente, armazenado como 0).
+    m_pageHeightSlider = makeSlider(kMinSheetHeight,
                                     EditorLayout::Manager::maxPageHeight(), 20);
     m_hMarginSlider = makeSlider(EditorLayout::Manager::minHorizontalMargin(),
                                  EditorLayout::Manager::maxHorizontalMargin(), 2);
@@ -122,10 +130,11 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     pageLayout->addLayout(grid);
 
     m_pageHint = new QLabel(
-        tr("Define o tamanho da \"folha\" e o respiro interno entre a borda "
-           "e o texto. O comprimento em \"Automático\" preenche a tela; com "
-           "um valor fixo, a folha ganha altura definida e o fundo aparece "
-           "em volta. Vale para todos os projetos."),
+        tr("Define o tamanho da \"folha\" e o respiro interno entre a borda e o "
+           "texto. No comprimento máximo (\"Tela cheia\") a folha preenche a "
+           "janela inteira e acompanha o seu tamanho; arrastando para a esquerda, "
+           "a folha ganha uma altura fixa e o fundo aparece em volta. Vale para "
+           "todos os projetos."),
         pageGroup);
     m_pageHint->setObjectName(QStringLiteral("settingsHint"));
     m_pageHint->setWordWrap(true);
@@ -240,10 +249,12 @@ SettingsPanel::SettingsPanel(QWidget* parent)
             });
     connect(m_pageHeightSlider, &QSlider::valueChanged, this,
             [this, layoutMgr](int v) {
-                m_pageHeightValue->setText(v <= 0 ? tr("Automático")
-                                                  : QStringLiteral("%1 px").arg(v));
+                m_pageHeightValue->setText(pageHeightLabelText(v));
                 if (m_blockLayoutSignals) return;
-                layoutMgr->setPageHeight(v);
+                // Extremo direito = "Tela cheia" → armazena 0 (preenche a janela
+                // dinamicamente). Valores menores são folhas de altura fixa.
+                const bool full = (v >= m_pageHeightSlider->maximum());
+                layoutMgr->setPageHeight(full ? 0 : v);
             });
     connect(m_hMarginSlider, &QSlider::valueChanged, this,
             [this, layoutMgr](int v) {
@@ -268,15 +279,35 @@ void SettingsPanel::syncPageLayoutFromManager()
     m_blockLayoutSignals = true;
     auto* mgr = EditorLayout::Manager::instance();
     m_pageWidthSlider->setValue(mgr->pageWidth());
-    m_pageHeightSlider->setValue(mgr->pageHeight());
+    // ph == 0 (Tela cheia) → extremo direito do slider. ph fixo → posição direta.
+    m_pageHeightSlider->setValue(mgr->pageHeight() <= 0
+                                 ? m_pageHeightSlider->maximum()
+                                 : mgr->pageHeight());
     m_hMarginSlider->setValue(mgr->horizontalMargin());
     m_vMarginSlider->setValue(mgr->verticalMargin());
     m_pageWidthValue->setText(QStringLiteral("%1 px").arg(mgr->pageWidth()));
-    m_pageHeightValue->setText(mgr->pageHeight() <= 0 ? tr("Automático")
-                               : QStringLiteral("%1 px").arg(mgr->pageHeight()));
+    m_pageHeightValue->setText(pageHeightLabelText(m_pageHeightSlider->value()));
     m_hMarginValue->setText(QStringLiteral("%1 px").arg(mgr->horizontalMargin()));
     m_vMarginValue->setText(QStringLiteral("%1 px").arg(mgr->verticalMargin()));
     m_blockLayoutSignals = false;
+}
+
+QString SettingsPanel::pageHeightLabelText(int v) const
+{
+    // Extremo direito do slider = preenche a janela (sem altura fixa).
+    if (v <= 0 || (m_pageHeightSlider && v >= m_pageHeightSlider->maximum()))
+        return tr("Tela cheia");
+    return QStringLiteral("%1 px").arg(v);
+}
+
+void SettingsPanel::setPageHeightMaximum(int px)
+{
+    if (!m_pageHeightSlider || px <= 0) return;
+    m_blockLayoutSignals = true;
+    m_pageHeightSlider->setMaximum(px);
+    m_blockLayoutSignals = false;
+    // Reexibe o valor atual já dentro do novo teto (setMaximum pode tê-lo grampeado).
+    syncPageLayoutFromManager();
 }
 
 void SettingsPanel::setAvailableSpellLanguages(const QList<QPair<QString, QString>>& langs)
