@@ -30,6 +30,9 @@ public:
         int end = 0;
         QString color;     // "#RRGGBB"
         QString comment;
+        QString text;      // trecho destacado (snippet), pro agregador do Pensário
+        int sceneIndex = -1; // cena (0-based) onde o marker cai; -1 = desconhecida
+        qint64 createdAt = 0; // epoch ms da criação; 0 = desconhecido (markers antigos)
     };
 
     explicit MarkerStore(QObject* parent = nullptr);
@@ -50,10 +53,14 @@ public:
 
     // Aplica novo marker sobre a seleção do cursor. Se comment vazio, não cria
     // entry (só pinta cor). Retorna o GUID criado ("" se sem comentário).
+    // sceneIndexHint: cena conhecida pelo chamador (viewMode). Se < 0, o store
+    // tenta inferir contando <hr> no documento (válido só quando o doc é o
+    // capítulo inteiro, não uma cena isolada).
     QString applyMarkerToSelection(const QString& docKey,
                                    QTextCursor& cursor,
                                    const QColor& color,
-                                   const QString& comment);
+                                   const QString& comment,
+                                   int sceneIndexHint = -1);
 
     // Remove um marker comentado (por GUID): limpa a property em todos os
     // fragments e tira a cor (volta pra textPrimary do tema).
@@ -67,6 +74,11 @@ public:
     Entry findById(const QString& docKey, const QString& id) const;
     bool hasMarker(const QString& docKey, const QString& id) const;
     bool hasMarkersForKey(const QString& docKey) const;
+
+    // Todos os comentários do projeto, indexados por docKey. Como markers
+    // sem comentário não viram Entry, este map já é "todos os comentários".
+    // Consumido pelo agregador de Comentários do Pensário.
+    const QHash<QString, QVector<Entry>>& allEntries() const { return m_entries; }
 
 signals:
     void markersChanged(QString docKey);

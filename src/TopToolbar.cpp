@@ -98,6 +98,7 @@ TopToolbar::TopToolbar(QWidget *parent)
     , settingsButton(makeIconButton(this))
     , fullscreenButton(makeIconButton(this))
     , refMenuButton(makeIconButton(this))
+    , pensarioButton(makeIconButton(this))
     , docTitleLabel(new QLabel(this))
     , fontPicker(nullptr)
     , sizeStepperValueLabel(nullptr)
@@ -290,6 +291,11 @@ TopToolbar::TopToolbar(QWidget *parent)
     refMenuButton->setToolTip(tr("Painel de Referência"));
     connect(refMenuButton, &QToolButton::clicked, this, &TopToolbar::refMenuToggleRequested);
 
+    pensarioButton->setObjectName(QStringLiteral("ttbSystem"));
+    bindIcon(pensarioButton, QStringLiteral("pensario.svg"));
+    pensarioButton->setToolTip(tr("Pensário"));
+    connect(pensarioButton, &QToolButton::clicked, this, &TopToolbar::pensarioToggleRequested);
+
     // ---------------- Título do documento (centro) ----------------
     docTitleLabel->setObjectName(QStringLiteral("ttbDocTitle"));
     docTitleLabel->setAlignment(Qt::AlignCenter);
@@ -346,6 +352,7 @@ TopToolbar::TopToolbar(QWidget *parent)
     layout->addWidget(settingsButton);
     layout->addWidget(fullscreenButton);
     layout->addWidget(makeVSeparator(this));
+    layout->addWidget(pensarioButton);
     layout->addWidget(refMenuButton);
 
     buildSizeMenu();

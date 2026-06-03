@@ -85,6 +85,8 @@
 #include "ProjectSaver.h"
 #include "ProjectStorage.h"
 #include "RefMenuPanel.h"
+#include "PensarioPanel.h"
+#include "NotesStore.h"
 #include "SceneUtils.h"
 #include "AmbienceManager.h"
 #include "AmbiencePanel.h"
@@ -828,6 +830,7 @@ void MainWindow::setupEditor()
     // MarkerStore: sidecar de markers comentados. Carrega ao abrir projeto,
     // re-aplica GUIDs no contentLoaded, captura ao flush e salva ao saveProject.
     markerStore = new MarkerStore(this);
+    notesStore = new NotesStore(this);
     markerPickPopup = new MarkerPickPopup(this);
     markerHoverPopup = new MarkerHoverPopup(this);
 
@@ -1319,6 +1322,20 @@ void MainWindow::setupEditor()
     connect(toolbar, &TopToolbar::refMenuToggleRequested, this, [this]() {
         if (refMenuPanel) refMenuPanel->togglePanel();
     });
+
+    // Pensário — painel auxiliar criativo. Fatia 1: agregador de comentários.
+    pensarioPanel = new PensarioPanel(markerStore, projectModel, notesStore, container);
+    pensarioPanel->raise();
+    connect(pensarioPanel, &PensarioPanel::openMarkerRequested,
+            this, &MainWindow::openMarkerInEditor);
+    connect(toolbar, &TopToolbar::pensarioToggleRequested, this, [this]() {
+        if (pensarioPanel) pensarioPanel->togglePanel();
+    });
+    if (markerStore) {
+        connect(markerStore, &MarkerStore::markersChanged, this, [this](const QString&) {
+            if (pensarioPanel && pensarioPanel->isPanelOpen()) pensarioPanel->refresh();
+        });
+    }
 
     // FindBar (Ctrl+F) — busca no doc em edição.
     findBar = new FindBar(container);
@@ -2969,6 +2986,11 @@ void MainWindow::applyProjectRoot(const QString& root)
         markerStore->setProjectRoot(root);
         markerStore->load();
     }
+    if (notesStore) {
+        notesStore->setProjectRoot(root);
+        notesStore->load();
+    }
+    if (pensarioPanel) pensarioPanel->refresh();
     if (glossaryStore) {
         glossaryStore->setProjectRoot(root);
         glossaryStore->load();
@@ -4073,7 +4095,11 @@ void MainWindow::applyMarkerFromPicker(const QColor& color, const QString& comme
         QTextCursor cur = editor->textCursor();
         cur.setPosition(s);
         cur.setPosition(e, QTextCursor::KeepAnchor);
-        appliedId = markerStore->applyMarkerToSelection(key, cur, color, comment);
+        // Em modo cena o documento é a cena isolada (sem <hr>); passa a cena
+        // conhecida pelo viewMode pro store não inferir errado.
+        const int sceneHint = (editorHost->viewMode().type == EditorHost::SceneDoc)
+            ? editorHost->viewMode().sceneIndex : -1;
+        appliedId = markerStore->applyMarkerToSelection(key, cur, color, comment, sceneHint);
         editor->setTextCursor(cur);
         editor->viewport()->update();
     }
@@ -4572,6 +4598,74 @@ void MainWindow::openMemoryInEditor(const MemoriesStore::Memory& mem)
         editor->moveCursor(QTextCursor::Start);
         if (editor->find(query))
             editor->ensureCursorVisible();
+        editor->setFocus();
+    });
+}
+
+EditorHost::ViewMode MainWindow::viewModeForDocKey(const QString& docKey) const
+{
+    EditorHost::ViewMode vm;
+    if (!projectModel || docKey.isEmpty()) return vm;
+
+    for (const Chapter& ch : projectModel->chapters()) {
+        if (DocCache::chapterKey(ch.manuscriptId, ch.id) == docKey) {
+            vm.type = EditorHost::ChapterDoc;
+            vm.manuscriptId = ch.manuscriptId;
+            vm.chapterId = ch.id;
+            return vm;
+        }
+    }
+    for (const Drawer& d : projectModel->drawers()) {
+        for (const DrawerItem& it : d.items) {
+            if (DocCache::itemKey(it.id) == docKey) {
+                vm.type = EditorHost::DrawerDoc;
+                vm.itemId = it.id;
+                return vm;
+            }
+        }
+    }
+    for (const Manuscript& ms : projectModel->manuscripts()) {
+        if (QStringLiteral("ms:%1").arg(ms.id) == docKey) {
+            vm.type = EditorHost::ManuscriptDoc;
+            vm.manuscriptId = ms.id;
+            return vm;
+        }
+    }
+    return vm; // Disabled — docKey órfão (doc removido)
+}
+
+void MainWindow::openMarkerInEditor(const QString& docKey, int start, int end, const QString& text)
+{
+    if (!editorHost || !editor) return;
+    EditorHost::ViewMode vm = viewModeForDocKey(docKey);
+    if (vm.type == EditorHost::Disabled) return;
+    editorHost->setViewMode(vm);
+
+    QString query = text;
+    query.replace(QChar(0x2029), QChar(' '));
+    query = query.trimmed();
+    if (query.size() > 60) query = query.left(60);
+
+    // Depois do doc carregar: prioriza busca pelo trecho (robusta a mudança de
+    // posição); cai pro intervalo absoluto guardado se o trecho não casar.
+    QTimer::singleShot(140, this, [this, query, start, end]() {
+        if (!editor) return;
+        if (!query.isEmpty()) {
+            editor->moveCursor(QTextCursor::Start);
+            if (editor->find(query)) {
+                editor->ensureCursorVisible();
+                editor->setFocus();
+                return;
+            }
+        }
+        QTextCursor c = editor->textCursor();
+        const int docLen = editor->document()->characterCount();
+        const int from = qBound(0, start, qMax(0, docLen - 1));
+        const int to = qBound(from, end, qMax(0, docLen - 1));
+        c.setPosition(from);
+        c.setPosition(to, QTextCursor::KeepAnchor);
+        editor->setTextCursor(c);
+        editor->ensureCursorVisible();
         editor->setFocus();
     });
 }

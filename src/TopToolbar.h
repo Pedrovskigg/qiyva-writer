@@ -58,6 +58,7 @@ signals:
     void saveProjectRequested();
     void exportRequested();
     void refMenuToggleRequested();
+    void pensarioToggleRequested();
     void boldToggled(bool enabled);
     void italicToggled(bool enabled);
     void underlineToggled(bool enabled);
@@ -97,6 +98,7 @@ private:
     QToolButton *settingsButton;
     QToolButton *fullscreenButton;
     QToolButton *refMenuButton;
+    QToolButton *pensarioButton;
     QLabel *docTitleLabel;
 
     QIcon focusOffIcon;

@@ -48,6 +48,12 @@ qt_add_executable(mira-writing
     src/WordCounterCalendar.h
     src/RefMenuPanel.cpp
     src/RefMenuPanel.h
+    src/PensarioPanel.cpp
+    src/PensarioPanel.h
+    src/NotesStore.cpp
+    src/NotesStore.h
+    src/NoteEditPopup.cpp
+    src/NoteEditPopup.h
     src/FindBar.cpp
     src/FindBar.h
     src/GlobalSearchPanel.cpp

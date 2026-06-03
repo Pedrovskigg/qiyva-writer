@@ -1,5 +1,6 @@
 #include "MarkerStore.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -8,6 +9,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QTextBlock>
+#include <QTextBlockFormat>
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -25,6 +27,21 @@ QColor parseColor(const QString& s)
 {
     QColor c(s);
     return c.isValid() ? c : QColor(QStringLiteral("#FFD54F"));
+}
+
+// Índice (0-based) da cena que contém targetBlock, contando separadores <hr>
+// — que no QTextDocument viram blocos com a propriedade de régua horizontal.
+// Espelha SceneUtils (delimitador de cena = <hr>).
+int sceneIndexForBlock(QTextDocument* doc, int targetBlock)
+{
+    if (!doc) return -1;
+    int scene = 0;
+    for (QTextBlock b = doc->firstBlock(); b.isValid(); b = b.next()) {
+        if (b.blockNumber() >= targetBlock) break;
+        if (b.blockFormat().hasProperty(QTextFormat::BlockTrailingHorizontalRulerWidth))
+            ++scene;
+    }
+    return scene;
 }
 
 }
@@ -87,6 +104,9 @@ bool MarkerStore::load()
             e.end = o.value(QStringLiteral("end")).toInt();
             e.color = o.value(QStringLiteral("color")).toString();
             e.comment = o.value(QStringLiteral("comment")).toString();
+            e.text = o.value(QStringLiteral("text")).toString();
+            e.sceneIndex = o.value(QStringLiteral("sceneIndex")).toInt(-1);
+            e.createdAt = o.value(QStringLiteral("createdAt")).toVariant().toLongLong();
             if (e.id.isEmpty()) continue;
             list.append(e);
         }
@@ -111,6 +131,9 @@ bool MarkerStore::save() const
             o.insert(QStringLiteral("end"), e.end);
             o.insert(QStringLiteral("color"), e.color);
             o.insert(QStringLiteral("comment"), e.comment);
+            if (!e.text.isEmpty()) o.insert(QStringLiteral("text"), e.text);
+            if (e.sceneIndex >= 0) o.insert(QStringLiteral("sceneIndex"), e.sceneIndex);
+            if (e.createdAt > 0) o.insert(QStringLiteral("createdAt"), e.createdAt);
             arr.append(o);
         }
         if (!arr.isEmpty()) root.insert(it.key(), arr);
@@ -191,6 +214,11 @@ void MarkerStore::captureFromDocument(const QString& docKey, QTextDocument* doc)
                 ? fmt.background().color().name()
                 : prev.color;
             e.comment = prev.comment;
+            e.text = prev.text;
+            // Preserva: recalcular via <hr> erraria quando o doc é uma cena
+            // isolada (sem separadores). O valor vem certo da criação.
+            e.sceneIndex = prev.sceneIndex;
+            e.createdAt = prev.createdAt;
             seenInFresh.insert(id, fresh.size());
             fresh.append(e);
         }
@@ -206,12 +234,18 @@ void MarkerStore::captureFromDocument(const QString& docKey, QTextDocument* doc)
 QString MarkerStore::applyMarkerToSelection(const QString& docKey,
                                             QTextCursor& cursor,
                                             const QColor& color,
-                                            const QString& comment)
+                                            const QString& comment,
+                                            int sceneIndexHint)
 {
     if (!cursor.hasSelection()) return QString();
     QTextCharFormat fmt;
     fmt.setBackground(color);
     fmt.setForeground(pickContrastingFg(color));
+
+    // Trecho destacado (normaliza separador de parágrafo do Qt) — guardado pro
+    // agregador do Pensário exibir/navegar até o trecho.
+    QString snippet = cursor.selectedText();
+    snippet.replace(QChar(0x2029), QChar(' '));
 
     QString id;
     if (!comment.trimmed().isEmpty()) {
@@ -232,6 +266,11 @@ QString MarkerStore::applyMarkerToSelection(const QString& docKey,
         e.end = selEnd;
         e.color = color.name();
         e.comment = comment;
+        e.text = snippet;
+        e.sceneIndex = (sceneIndexHint >= 0)
+            ? sceneIndexHint
+            : sceneIndexForBlock(cursor.document(), e.blockIndex);
+        e.createdAt = QDateTime::currentMSecsSinceEpoch();
         m_entries[docKey].append(e);
         emit markersChanged(docKey);
     }

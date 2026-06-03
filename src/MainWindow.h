@@ -37,6 +37,7 @@ class ProjectSaver;
 class WordCounter;
 class WordCountPanel;
 class RefMenuPanel;
+class PensarioPanel;
 class ElementsStore;
 class SpellChecker;
 class SpellHighlighter;
@@ -49,6 +50,7 @@ class ProjectInfoHover;
 class BondPopup;
 class BondViewPanel;
 class MarkerStore;
+class NotesStore;
 class MarkerPickPopup;
 class MarkerHoverPopup;
 class AmbienceManager;
@@ -149,6 +151,10 @@ private:
     void restoreLastDocFor(const QString& root);
     void applyProjectRoot(const QString& root);
 
+    // Pensário: abre o documento de um comentário e salta até o trecho.
+    void openMarkerInEditor(const QString& docKey, int start, int end, const QString& text);
+    EditorHost::ViewMode viewModeForDocKey(const QString& docKey) const;
+
     void openMarkerPickerForSelection(bool withComment);
     void openMarkerPickerForEdit(const QString& markerId);
     void applyMarkerFromPicker(const QColor& color, const QString& comment);
@@ -209,6 +215,7 @@ private:
     WordCounter *wordCounter;
     WordCountPanel *wordCountPanel;
     RefMenuPanel *refMenuPanel;
+    PensarioPanel *pensarioPanel = nullptr;
     ElementsStore *elementsStore;
     SpellChecker *spellChecker;
     SpellHighlighter *spellHighlighter;
@@ -222,6 +229,7 @@ private:
     BondPopup *bondPopup = nullptr;
     BondViewPanel *bondViewPanel = nullptr;
     MarkerStore *markerStore = nullptr;
+    NotesStore *notesStore = nullptr;
     MarkerPickPopup *markerPickPopup = nullptr;
     MarkerHoverPopup *markerHoverPopup = nullptr;
     AmbienceManager *ambienceManager = nullptr;

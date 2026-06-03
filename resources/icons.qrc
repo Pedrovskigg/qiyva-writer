@@ -24,6 +24,7 @@
         <file alias="check.svg">../src/assets/icons/check.svg</file>
         <file alias="readmode.svg">../src/assets/icons/readmode.svg</file>
         <file alias="refmenu.svg">../src/assets/icons/refmenu.svg</file>
+        <file alias="pensario.svg">../src/assets/icons/pensario.svg</file>
         <file alias="reminder.svg">../src/assets/icons/reminder.svg</file>
         <file alias="save-project.svg">../src/assets/icons/save-project.svg</file>
         <file alias="search.svg">../src/assets/icons/search.svg</file>
