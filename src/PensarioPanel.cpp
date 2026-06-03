@@ -2,6 +2,7 @@
 
 #include "DocCache.h"
 #include "MarkerStore.h"
+#include "NameGenerator.h"
 #include "NoteEditPopup.h"
 #include "NotesStore.h"
 #include "ProjectModel.h"
@@ -9,17 +10,23 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QClipboard>
 #include <QColor>
+#include <QComboBox>
 #include <QEvent>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -39,6 +46,7 @@ PensarioPanel::PensarioPanel(MarkerStore* markers, ProjectModel* model,
     , m_notesStore(notes)
 {
     setObjectName(QStringLiteral("pensarioPanel"));
+    m_nameGen = new NameGenerator();
     buildUi();
     applyTheme();
     connect(Theme::Manager::instance(), &Theme::Manager::themeChanged,
@@ -46,6 +54,11 @@ PensarioPanel::PensarioPanel(MarkerStore* markers, ProjectModel* model,
     if (m_notesStore)
         connect(m_notesStore, &NotesStore::notesChanged, this, &PensarioPanel::rebuildNotes);
     hide();
+}
+
+PensarioPanel::~PensarioPanel()
+{
+    delete m_nameGen;
 }
 
 void PensarioPanel::buildUi()
@@ -99,6 +112,17 @@ void PensarioPanel::buildUi()
     updateSortText();
     headLay->addWidget(m_sortBtn);
 
+    // Acesso discreto ao gerador de nomes (ferramenta ocasional, fora das abas).
+    m_namesBtn = new QToolButton(m_header);
+    m_namesBtn->setObjectName(QStringLiteral("pnNamesBtn"));
+    m_namesBtn->setText(QStringLiteral("✦"));
+    m_namesBtn->setCheckable(true);
+    m_namesBtn->setCursor(Qt::PointingHandCursor);
+    m_namesBtn->setToolTip(tr("Gerador de nomes"));
+    m_namesBtn->setFixedSize(28, 28);
+    connect(m_namesBtn, &QToolButton::clicked, this, [this]() { selectTab(Tab::Names); });
+    headLay->addWidget(m_namesBtn);
+
     m_closeBtn = new QToolButton(m_header);
     m_closeBtn->setObjectName(QStringLiteral("pnClose"));
     m_closeBtn->setText(QStringLiteral("×")); // ×
@@ -129,12 +153,10 @@ void PensarioPanel::buildUi()
     };
     m_tabComments = makeTab(tr("Comentários"));
     m_tabNotes    = makeTab(tr("Notas"));
-    m_tabNames    = makeTab(tr("Nomes"));
     m_tabMap      = makeTab(tr("Mapa"));
 
     connect(m_tabComments, &QToolButton::clicked, this, [this]() { selectTab(Tab::Comments); });
     connect(m_tabNotes,    &QToolButton::clicked, this, [this]() { selectTab(Tab::Notes); });
-    connect(m_tabNames,    &QToolButton::clicked, this, [this]() { selectTab(Tab::Names); });
     connect(m_tabMap,      &QToolButton::clicked, this, [this]() { selectTab(Tab::Map); });
 
     root->addWidget(tabsRow);
@@ -153,15 +175,16 @@ void PensarioPanel::buildUi()
     m_commentsLay->setSpacing(8);
     m_commentsLay->addStretch();
     m_commentsScroll->setWidget(m_commentsInner);
+    m_commentsScroll->viewport()->setStyleSheet(QStringLiteral("background: transparent;"));
     m_stack->addWidget(m_commentsScroll);
 
     // Página 1: Notas (funcional)
     m_stack->addWidget(buildNotesPage());
 
-    // Páginas 2-3: placeholders das fatias futuras
-    m_stack->addWidget(buildPlaceholderPage(
-        tr("Gerador de nomes"),
-        tr("Nomes de personagens, lugares e mais, por estilo. Em breve.")));
+    // Página 2: Gerador de nomes (funcional)
+    m_stack->addWidget(buildNamesPage());
+
+    // Página 3: placeholder da fatia futura
     m_stack->addWidget(buildPlaceholderPage(
         tr("Mapa-múndi"),
         tr("Países, capitais e fronteiras do mundo real. Em breve.")));
@@ -218,6 +241,7 @@ QWidget* PensarioPanel::buildNotesPage()
     m_notesLay->setSpacing(8);
     m_notesLay->addStretch();
     m_notesScroll->setWidget(m_notesInner);
+    m_notesScroll->viewport()->setStyleSheet(QStringLiteral("background: transparent;"));
     lay->addWidget(m_notesScroll, 1);
 
     return page;
@@ -368,13 +392,231 @@ void PensarioPanel::openNoteEditById(const QString& id)
     }
 }
 
+QWidget* PensarioPanel::buildNamesPage()
+{
+    auto* page = new QWidget(m_stack);
+    auto* lay = new QVBoxLayout(page);
+    lay->setContentsMargins(12, 10, 12, 12);
+    lay->setSpacing(8);
+
+    // Categoria (pills)
+    auto* catRow = new QHBoxLayout();
+    catRow->setContentsMargins(0, 0, 0, 0);
+    catRow->setSpacing(4);
+    auto makeCat = [&](const QString& label) {
+        auto* b = new QToolButton(page);
+        b->setObjectName(QStringLiteral("pnCatBtn"));
+        b->setText(label);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        catRow->addWidget(b);
+        return b;
+    };
+    m_catChar = makeCat(tr("Personagens"));
+    m_catPlace = makeCat(tr("Lugares"));
+    m_catWeapon = makeCat(tr("Armas"));
+    connect(m_catChar, &QToolButton::clicked, this,
+            [this]() { setNameCategory(NameCategory::Character); });
+    connect(m_catPlace, &QToolButton::clicked, this,
+            [this]() { setNameCategory(NameCategory::Place); });
+    connect(m_catWeapon, &QToolButton::clicked, this,
+            [this]() { setNameCategory(NameCategory::Weapon); });
+    lay->addLayout(catRow);
+
+    // Estilo + botão Gerar
+    auto* ctrlRow = new QHBoxLayout();
+    ctrlRow->setContentsMargins(0, 0, 0, 0);
+    ctrlRow->setSpacing(6);
+    m_styleCombo = new QComboBox(page);
+    m_styleCombo->setObjectName(QStringLiteral("pnStyleCombo"));
+    m_styleCombo->setCursor(Qt::PointingHandCursor);
+    ctrlRow->addWidget(m_styleCombo, 1);
+    m_genBtn = new QToolButton(page);
+    m_genBtn->setObjectName(QStringLiteral("pnGenBtn"));
+    m_genBtn->setText(tr("Gerar"));
+    m_genBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_genBtn, &QToolButton::clicked, this, &PensarioPanel::generateNames);
+    ctrlRow->addWidget(m_genBtn);
+    lay->addLayout(ctrlRow);
+
+    // Gênero — só relevante pro estilo "Pessoa" (nomes reais).
+    m_genderRow = new QWidget(page);
+    auto* genLay = new QHBoxLayout(m_genderRow);
+    genLay->setContentsMargins(0, 0, 0, 0);
+    genLay->setSpacing(4);
+    m_genFem = new QToolButton(m_genderRow);
+    m_genFem->setObjectName(QStringLiteral("pnCatBtn"));
+    m_genFem->setText(tr("Feminino"));
+    m_genFem->setCheckable(true);
+    m_genFem->setChecked(true);
+    m_genFem->setCursor(Qt::PointingHandCursor);
+    m_genFem->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_genMasc = new QToolButton(m_genderRow);
+    m_genMasc->setObjectName(QStringLiteral("pnCatBtn"));
+    m_genMasc->setText(tr("Masculino"));
+    m_genMasc->setCheckable(true);
+    m_genMasc->setCursor(Qt::PointingHandCursor);
+    m_genMasc->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    connect(m_genFem, &QToolButton::clicked, this, [this]() {
+        m_gender = Gender::Female; m_genFem->setChecked(true); m_genMasc->setChecked(false);
+    });
+    connect(m_genMasc, &QToolButton::clicked, this, [this]() {
+        m_gender = Gender::Male; m_genMasc->setChecked(true); m_genFem->setChecked(false);
+    });
+    genLay->addWidget(m_genFem);
+    genLay->addWidget(m_genMasc);
+    lay->addWidget(m_genderRow);
+
+    connect(m_styleCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateGenderVisibility(); });
+
+    // Afixos opcionais (só pros estilos Markov).
+    m_filterRow = new QWidget(page);
+    auto* filterLay = new QHBoxLayout(m_filterRow);
+    filterLay->setContentsMargins(0, 0, 0, 0);
+    filterLay->setSpacing(6);
+    m_prefixEdit = new QLineEdit(m_filterRow);
+    m_prefixEdit->setObjectName(QStringLiteral("pnAffix"));
+    m_prefixEdit->setPlaceholderText(tr("Começa com…"));
+    m_prefixEdit->setClearButtonEnabled(true);
+    m_suffixEdit = new QLineEdit(m_filterRow);
+    m_suffixEdit->setObjectName(QStringLiteral("pnAffix"));
+    m_suffixEdit->setPlaceholderText(tr("Termina com…"));
+    m_suffixEdit->setClearButtonEnabled(true);
+    connect(m_prefixEdit, &QLineEdit::returnPressed, this, &PensarioPanel::generateNames);
+    connect(m_suffixEdit, &QLineEdit::returnPressed, this, &PensarioPanel::generateNames);
+    filterLay->addWidget(m_prefixEdit);
+    filterLay->addWidget(m_suffixEdit);
+    lay->addWidget(m_filterRow);
+
+    m_nameStatus = new QLabel(QString(), page);
+    m_nameStatus->setObjectName(QStringLiteral("pnNameStatus"));
+    m_nameStatus->setAlignment(Qt::AlignCenter);
+    lay->addWidget(m_nameStatus);
+
+    m_namesScroll = new QScrollArea(page);
+    m_namesScroll->setWidgetResizable(true);
+    m_namesScroll->setFrameShape(QFrame::NoFrame);
+    m_namesScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_namesInner = new QWidget(m_namesScroll);
+    m_namesLay = new QVBoxLayout(m_namesInner);
+    m_namesLay->setContentsMargins(0, 0, 0, 0);
+    m_namesLay->setSpacing(4);
+    auto* hint = new QLabel(tr("Escolha uma categoria e clique em Gerar."), m_namesInner);
+    hint->setObjectName(QStringLiteral("pnEmpty"));
+    hint->setAlignment(Qt::AlignCenter);
+    hint->setWordWrap(true);
+    m_namesLay->addWidget(hint);
+    m_namesLay->addStretch();
+    m_namesScroll->setWidget(m_namesInner);
+    m_namesScroll->viewport()->setStyleSheet(QStringLiteral("background: transparent;"));
+    lay->addWidget(m_namesScroll, 1);
+
+    setNameCategory(NameCategory::Character);
+    return page;
+}
+
+void PensarioPanel::setNameCategory(NameCategory c)
+{
+    m_nameCategory = c;
+    if (m_catChar) m_catChar->setChecked(c == NameCategory::Character);
+    if (m_catPlace) m_catPlace->setChecked(c == NameCategory::Place);
+    if (m_catWeapon) m_catWeapon->setChecked(c == NameCategory::Weapon);
+
+    const bool useStyle = (c != NameCategory::Weapon);
+    if (m_filterRow) m_filterRow->setVisible(useStyle);
+    if (m_styleCombo) {
+        m_styleCombo->setVisible(useStyle);
+        m_styleCombo->clear();
+        if (c == NameCategory::Character) {
+            for (const auto& s : NameGenerator::characterStyles())
+                m_styleCombo->addItem(s.label, s.id);
+        } else if (c == NameCategory::Place) {
+            for (const auto& s : NameGenerator::placeStyles())
+                m_styleCombo->addItem(s.label, s.id);
+        }
+    }
+    updateGenderVisibility();
+}
+
+void PensarioPanel::updateGenderVisibility()
+{
+    const bool show = (m_nameCategory == NameCategory::Character)
+        && m_styleCombo
+        && m_styleCombo->currentData().toString() == QStringLiteral("real");
+    if (m_genderRow) m_genderRow->setVisible(show);
+}
+
+void PensarioPanel::generateNames()
+{
+    if (!m_namesLay || !m_nameGen) return;
+
+    while (m_namesLay->count() > 0) {
+        QLayoutItem* item = m_namesLay->takeAt(0);
+        if (QWidget* w = item->widget()) w->deleteLater();
+        delete item;
+    }
+    if (m_nameStatus) m_nameStatus->clear();
+
+    QStringList names;
+    bool hadAffix = false;
+    if (m_nameCategory == NameCategory::Weapon) {
+        names = m_nameGen->generateWeapons(14);
+    } else {
+        QString styleId = m_styleCombo ? m_styleCombo->currentData().toString() : QString();
+        // "Pessoa" + gênero escolhem o dataset real correspondente.
+        if (m_nameCategory == NameCategory::Character && styleId == QStringLiteral("real"))
+            styleId = (m_gender == Gender::Female) ? QStringLiteral("female")
+                                                   : QStringLiteral("male");
+        const QString pfx = m_prefixEdit ? m_prefixEdit->text() : QString();
+        const QString sfx = m_suffixEdit ? m_suffixEdit->text() : QString();
+        hadAffix = !pfx.trimmed().isEmpty() || !sfx.trimmed().isEmpty();
+        names = m_nameGen->generate(styleId, 14, pfx, sfx);
+    }
+
+    for (const QString& n : names) {
+        auto* item = new QPushButton(n, m_namesInner);
+        item->setObjectName(QStringLiteral("pnNameItem"));
+        item->setCursor(Qt::PointingHandCursor);
+        item->setFlat(true);
+        item->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        item->setToolTip(tr("Clique para copiar"));
+        connect(item, &QPushButton::clicked, this, [this, n]() { copyName(n); });
+        m_namesLay->addWidget(item);
+    }
+    if (names.isEmpty()) {
+        auto* empty = new QLabel(
+            hadAffix ? tr("Nenhum nome com esse começo/fim neste estilo.\n"
+                          "Tente outro estilo ou um afixo mais comum.")
+                     : tr("Nada gerado. Tente de novo."),
+            m_namesInner);
+        empty->setObjectName(QStringLiteral("pnEmpty"));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setWordWrap(true);
+        m_namesLay->addWidget(empty);
+    }
+    m_namesLay->addStretch();
+}
+
+void PensarioPanel::copyName(const QString& name)
+{
+    QGuiApplication::clipboard()->setText(name);
+    if (m_nameStatus) {
+        m_nameStatus->setText(tr("« %1 » copiado").arg(name));
+        QTimer::singleShot(1800, m_nameStatus, [label = m_nameStatus]() {
+            label->clear();
+        });
+    }
+}
+
 void PensarioPanel::selectTab(Tab tab)
 {
     m_tab = tab;
     m_tabComments->setChecked(tab == Tab::Comments);
     m_tabNotes->setChecked(tab == Tab::Notes);
-    m_tabNames->setChecked(tab == Tab::Names);
     m_tabMap->setChecked(tab == Tab::Map);
+    if (m_namesBtn) m_namesBtn->setChecked(tab == Tab::Names);
     m_stack->setCurrentIndex(static_cast<int>(tab));
     if (m_sortBtn) m_sortBtn->setVisible(tab == Tab::Comments);
     if (tab == Tab::Comments) rebuildComments();
@@ -600,6 +842,7 @@ void PensarioPanel::togglePanel()
 
 void PensarioPanel::openPanel()
 {
+    applyTheme(); // tema pode ter sido restaurado em silêncio após a criação
     refresh();
     ancorRight();
     show();
@@ -620,9 +863,10 @@ void PensarioPanel::ancorRight()
 {
     QWidget* p = parentWidget();
     if (!p) return;
-    const int h = qMax(360, p->height() - kMargin * 2);
-    resize(kPanelWidth, qMin(h, p->height() - kMargin * 2));
-    move(p->width() - width() - kMargin, kMargin);
+    const int top = m_topInset + kMargin; // começa abaixo da TopToolbar flutuante
+    const int h = qMax(200, p->height() - top - kMargin);
+    resize(kPanelWidth, h);
+    move(p->width() - width() - kMargin, top);
     m_positioned = true;
 }
 
@@ -730,6 +974,10 @@ void PensarioPanel::applyTheme()
             border: 1px solid %2;
             border-radius: 10px;
         }
+        /* Áreas de rolagem e seus viewports herdam o fundo do painel
+           (senão mostram a cor base padrão do Qt e destoam do tema). */
+        #pensarioPanel QScrollArea { background: transparent; border: none; }
+        #pensarioPanel QScrollArea > QWidget { background: transparent; }
         #pnHeader {
             border-bottom: 1px solid %2;
         }
@@ -746,6 +994,15 @@ void PensarioPanel::applyTheme()
             border-radius: 6px;
         }
         #pnClose:hover { background: %7; color: %5; }
+        #pnNamesBtn {
+            color: %4;
+            background: transparent;
+            border: none;
+            font-size: 15px;
+            border-radius: 6px;
+        }
+        #pnNamesBtn:hover { background: %7; color: %3; }
+        #pnNamesBtn:checked { background: %8; color: %5; }
         #pnSort {
             color: %4;
             background: transparent;
@@ -819,6 +1076,60 @@ void PensarioPanel::applyTheme()
             border-radius: 4px;
         }
         #pnNoteDelete:hover { color: %5; background: %7; }
+        #pnCatBtn {
+            color: %4;
+            background: transparent;
+            border: 1px solid %9;
+            border-radius: 7px;
+            padding: 5px 4px;
+            font-size: 12px;
+        }
+        #pnCatBtn:hover { background: %7; color: %3; }
+        #pnCatBtn:checked { background: %8; color: %5; font-weight: 600; }
+        #pnGenBtn {
+            color: %3;
+            background: %8;
+            border: none;
+            border-radius: 7px;
+            padding: 6px 16px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        #pnGenBtn:hover { background: %7; }
+        #pnStyleCombo {
+            color: %3;
+            background: %6;
+            border: 1px solid %9;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 13px;
+        }
+        #pnStyleCombo QAbstractItemView {
+            background: %1;
+            color: %3;
+            border: 1px solid %9;
+            selection-background-color: %7;
+        }
+        #pnNameItem {
+            color: %3;
+            background: %6;
+            border: 1px solid %9;
+            border-radius: 6px;
+            padding: 7px 10px;
+            font-size: 13px;
+            text-align: left;
+        }
+        #pnNameItem:hover { border-color: %8; background: %7; }
+        #pnAffix {
+            color: %3;
+            background: %6;
+            border: 1px solid %9;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 12px;
+        }
+        #pnAffix:focus { border-color: %8; }
+        #pnNameStatus { color: %8; font-size: 12px; }
         #pnEmpty, #pnPlaceholderSub {
             color: %4;
             font-size: 13px;

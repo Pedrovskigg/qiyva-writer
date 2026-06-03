@@ -6,6 +6,8 @@
 
 class QLabel;
 class QToolButton;
+class QComboBox;
+class QLineEdit;
 class QVBoxLayout;
 class QScrollArea;
 class QStackedWidget;
@@ -13,6 +15,7 @@ class ProjectModel;
 class MarkerStore;
 class NotesStore;
 class NoteEditPopup;
+class NameGenerator;
 struct Chapter;
 
 // Pensário — painel "auxiliar criativo" do Mira 2 (Pensarium no i18n).
@@ -25,11 +28,15 @@ class PensarioPanel : public QWidget {
 public:
     PensarioPanel(MarkerStore* markers, ProjectModel* model, NotesStore* notes,
                   QWidget* parent = nullptr);
+    ~PensarioPanel() override;
 
     void togglePanel();
     void openPanel();
     void closePanel();
     bool isPanelOpen() const;
+
+    // Altura da TopToolbar flutuante — o painel ancora logo abaixo dela.
+    void setTopInset(int px) { m_topInset = px; }
 
 signals:
     // Pedido pra abrir um documento no editor e saltar até o trecho comentado.
@@ -48,6 +55,8 @@ private slots:
 private:
     enum class Tab { Comments = 0, Notes = 1, Names = 2, Map = 3 };
     enum class SortMode { Chapters, Creation };
+    enum class NameCategory { Character, Place, Weapon };
+    enum class Gender { Female, Male };
 
     void buildUi();
     void selectTab(Tab tab);
@@ -62,6 +71,11 @@ private:
     void ensureNotePopup();
     void openNoteCreate();
     void openNoteEditById(const QString& id);
+    QWidget* buildNamesPage();
+    void setNameCategory(NameCategory c);
+    void updateGenderVisibility();
+    void generateNames();
+    void copyName(const QString& name);
     QWidget* buildPlaceholderPage(const QString& title, const QString& subtitle);
     QString docTitleForKey(const QString& docKey) const;
     const Chapter* chapterForKey(const QString& docKey) const;
@@ -76,6 +90,7 @@ private:
     NotesStore* m_notesStore = nullptr;
     Tab m_tab = Tab::Comments;
     SortMode m_sortMode = SortMode::Chapters;
+    int m_topInset = 0;
     bool m_positioned = false;
 
     QWidget* m_header = nullptr;
@@ -85,8 +100,8 @@ private:
 
     QToolButton* m_tabComments = nullptr;
     QToolButton* m_tabNotes = nullptr;
-    QToolButton* m_tabNames = nullptr;
     QToolButton* m_tabMap = nullptr;
+    QToolButton* m_namesBtn = nullptr; // acesso discreto ao gerador, no header
 
     QStackedWidget* m_stack = nullptr;
     QScrollArea* m_commentsScroll = nullptr;
@@ -98,6 +113,25 @@ private:
     QVBoxLayout* m_notesLay = nullptr;
     NoteEditPopup* m_notePopup = nullptr;
     QString m_editingNoteId; // vazio = criando nova
+
+    NameGenerator* m_nameGen = nullptr;
+    NameCategory m_nameCategory = NameCategory::Character;
+    QToolButton* m_catChar = nullptr;
+    QToolButton* m_catPlace = nullptr;
+    QToolButton* m_catWeapon = nullptr;
+    QComboBox* m_styleCombo = nullptr;
+    QToolButton* m_genBtn = nullptr;
+    Gender m_gender = Gender::Female;
+    QWidget* m_genderRow = nullptr;
+    QToolButton* m_genFem = nullptr;
+    QToolButton* m_genMasc = nullptr;
+    QWidget* m_filterRow = nullptr;
+    QLineEdit* m_prefixEdit = nullptr;
+    QLineEdit* m_suffixEdit = nullptr;
+    QLabel* m_nameStatus = nullptr;
+    QScrollArea* m_namesScroll = nullptr;
+    QWidget* m_namesInner = nullptr;
+    QVBoxLayout* m_namesLay = nullptr;
 
     bool m_dragging = false;
     QPoint m_dragOffset;

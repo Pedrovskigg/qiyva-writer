@@ -1325,6 +1325,7 @@ void MainWindow::setupEditor()
 
     // Pensário — painel auxiliar criativo. Fatia 1: agregador de comentários.
     pensarioPanel = new PensarioPanel(markerStore, projectModel, notesStore, container);
+    pensarioPanel->setTopInset(toolbarHolder ? toolbarHolder->sizeHint().height() : 0);
     pensarioPanel->raise();
     connect(pensarioPanel, &PensarioPanel::openMarkerRequested,
             this, &MainWindow::openMarkerInEditor);

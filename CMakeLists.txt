@@ -54,6 +54,8 @@ qt_add_executable(mira-writing
     src/NotesStore.h
     src/NoteEditPopup.cpp
     src/NoteEditPopup.h
+    src/NameGenerator.cpp
+    src/NameGenerator.h
     src/FindBar.cpp
     src/FindBar.h
     src/GlobalSearchPanel.cpp
