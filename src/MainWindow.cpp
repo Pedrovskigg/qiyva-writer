@@ -87,6 +87,7 @@
 #include "RefMenuPanel.h"
 #include "PensarioPanel.h"
 #include "NotesStore.h"
+#include "MapPinsStore.h"
 #include "SceneUtils.h"
 #include "AmbienceManager.h"
 #include "AmbiencePanel.h"
@@ -831,6 +832,7 @@ void MainWindow::setupEditor()
     // re-aplica GUIDs no contentLoaded, captura ao flush e salva ao saveProject.
     markerStore = new MarkerStore(this);
     notesStore = new NotesStore(this);
+    mapPinsStore = new MapPinsStore(this);
     markerPickPopup = new MarkerPickPopup(this);
     markerHoverPopup = new MarkerHoverPopup(this);
 
@@ -1325,6 +1327,7 @@ void MainWindow::setupEditor()
 
     // Pensário — painel auxiliar criativo. Fatia 1: agregador de comentários.
     pensarioPanel = new PensarioPanel(markerStore, projectModel, notesStore, container);
+    pensarioPanel->setMapPinsStore(mapPinsStore);
     pensarioPanel->setTopInset(toolbarHolder ? toolbarHolder->sizeHint().height() : 0);
     pensarioPanel->raise();
     connect(pensarioPanel, &PensarioPanel::openMarkerRequested,
@@ -2990,6 +2993,10 @@ void MainWindow::applyProjectRoot(const QString& root)
     if (notesStore) {
         notesStore->setProjectRoot(root);
         notesStore->load();
+    }
+    if (mapPinsStore) {
+        mapPinsStore->setProjectRoot(root);
+        mapPinsStore->load();
     }
     if (pensarioPanel) pensarioPanel->refresh();
     if (glossaryStore) {

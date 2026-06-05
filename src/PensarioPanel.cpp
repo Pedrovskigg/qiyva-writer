@@ -1,10 +1,12 @@
 #include "PensarioPanel.h"
 
 #include "DocCache.h"
+#include "IconUtils.h"
 #include "MarkerStore.h"
 #include "NameGenerator.h"
 #include "NoteEditPopup.h"
 #include "NotesStore.h"
+#include "MapPanel.h"
 #include "ProjectModel.h"
 #include "Theme.h"
 
@@ -123,6 +125,16 @@ void PensarioPanel::buildUi()
     connect(m_namesBtn, &QToolButton::clicked, this, [this]() { selectTab(Tab::Names); });
     headLay->addWidget(m_namesBtn);
 
+    // Acesso ao painel do mapa-múndi (painel próprio, fora das abas).
+    m_mapBtn = new QToolButton(m_header);
+    m_mapBtn->setObjectName(QStringLiteral("pnMapBtn"));
+    m_mapBtn->setCursor(Qt::PointingHandCursor);
+    m_mapBtn->setToolTip(tr("Mapa-múndi"));
+    m_mapBtn->setFixedSize(28, 28);
+    m_mapBtn->setIconSize(QSize(18, 18));
+    connect(m_mapBtn, &QToolButton::clicked, this, &PensarioPanel::openMapPanel);
+    headLay->addWidget(m_mapBtn);
+
     m_closeBtn = new QToolButton(m_header);
     m_closeBtn->setObjectName(QStringLiteral("pnClose"));
     m_closeBtn->setText(QStringLiteral("×")); // ×
@@ -153,11 +165,9 @@ void PensarioPanel::buildUi()
     };
     m_tabComments = makeTab(tr("Comentários"));
     m_tabNotes    = makeTab(tr("Notas"));
-    m_tabMap      = makeTab(tr("Mapa"));
 
     connect(m_tabComments, &QToolButton::clicked, this, [this]() { selectTab(Tab::Comments); });
     connect(m_tabNotes,    &QToolButton::clicked, this, [this]() { selectTab(Tab::Notes); });
-    connect(m_tabMap,      &QToolButton::clicked, this, [this]() { selectTab(Tab::Map); });
 
     root->addWidget(tabsRow);
 
@@ -183,11 +193,6 @@ void PensarioPanel::buildUi()
 
     // Página 2: Gerador de nomes (funcional)
     m_stack->addWidget(buildNamesPage());
-
-    // Página 3: placeholder da fatia futura
-    m_stack->addWidget(buildPlaceholderPage(
-        tr("Mapa-múndi"),
-        tr("Países, capitais e fronteiras do mundo real. Em breve.")));
 
     root->addWidget(m_stack, 1);
 
@@ -377,6 +382,16 @@ void PensarioPanel::openNoteCreate()
     ensureNotePopup();
     m_editingNoteId.clear();
     m_notePopup->openForCreate();
+}
+
+void PensarioPanel::openMapPanel()
+{
+    if (!m_mapPanel) {
+        QWidget* host = parentWidget() ? parentWidget() : this;
+        m_mapPanel = new MapPanel(m_mapPins, m_model, host);
+        m_mapPanel->setTopInset(m_topInset);
+    }
+    m_mapPanel->togglePanel();
 }
 
 void PensarioPanel::openNoteEditById(const QString& id)
@@ -615,7 +630,6 @@ void PensarioPanel::selectTab(Tab tab)
     m_tab = tab;
     m_tabComments->setChecked(tab == Tab::Comments);
     m_tabNotes->setChecked(tab == Tab::Notes);
-    m_tabMap->setChecked(tab == Tab::Map);
     if (m_namesBtn) m_namesBtn->setChecked(tab == Tab::Names);
     m_stack->setCurrentIndex(static_cast<int>(tab));
     if (m_sortBtn) m_sortBtn->setVisible(tab == Tab::Comments);
@@ -1003,6 +1017,8 @@ void PensarioPanel::applyTheme()
         }
         #pnNamesBtn:hover { background: %7; color: %3; }
         #pnNamesBtn:checked { background: %8; color: %5; }
+        #pnMapBtn { background: transparent; border: none; border-radius: 6px; }
+        #pnMapBtn:hover { background: %7; }
         #pnSort {
             color: %4;
             background: transparent;
@@ -1141,4 +1157,11 @@ void PensarioPanel::applyTheme()
         }
     )")
         .arg(bg, border, textPri, textMut, textBrt, cardBg, hover, accent, cardBd));
+
+    // Ícone SVG do mapa precisa ser re-tintado a cada troca de tema.
+    if (m_mapBtn) {
+        m_mapBtn->setIcon(IconUtils::loadToolbarIcon(
+            QStringLiteral(":/icons/worldmap.svg"),
+            QColor(textMut), QColor(textPri), QColor(textBrt), QSize(18, 18)));
+    }
 }

@@ -51,6 +51,7 @@ class BondPopup;
 class BondViewPanel;
 class MarkerStore;
 class NotesStore;
+class MapPinsStore;
 class MarkerPickPopup;
 class MarkerHoverPopup;
 class AmbienceManager;
@@ -230,6 +231,7 @@ private:
     BondViewPanel *bondViewPanel = nullptr;
     MarkerStore *markerStore = nullptr;
     NotesStore *notesStore = nullptr;
+    MapPinsStore *mapPinsStore = nullptr;
     MarkerPickPopup *markerPickPopup = nullptr;
     MarkerHoverPopup *markerHoverPopup = nullptr;
     AmbienceManager *ambienceManager = nullptr;

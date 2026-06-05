@@ -56,6 +56,14 @@ qt_add_executable(mira-writing
     src/NoteEditPopup.h
     src/NameGenerator.cpp
     src/NameGenerator.h
+    src/GeoData.cpp
+    src/GeoData.h
+    src/MapView.cpp
+    src/MapView.h
+    src/MapPanel.cpp
+    src/MapPanel.h
+    src/MapPinsStore.cpp
+    src/MapPinsStore.h
     src/FindBar.cpp
     src/FindBar.h
     src/GlobalSearchPanel.cpp
@@ -175,6 +183,8 @@ qt_add_executable(mira-writing
     src/NewProjectFlow.cpp
     src/NewProjectFlow.h
     resources/icons.qrc
+    resources/geo.qrc
+    resources/flags.qrc
     $<$<PLATFORM_ID:Windows>:resources/mira.rc>
 )
 

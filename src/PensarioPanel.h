@@ -16,6 +16,8 @@ class MarkerStore;
 class NotesStore;
 class NoteEditPopup;
 class NameGenerator;
+class MapPanel;
+class MapPinsStore;
 struct Chapter;
 
 // Pensário — painel "auxiliar criativo" do Mira 2 (Pensarium no i18n).
@@ -37,6 +39,7 @@ public:
 
     // Altura da TopToolbar flutuante — o painel ancora logo abaixo dela.
     void setTopInset(int px) { m_topInset = px; }
+    void setMapPinsStore(MapPinsStore* s) { m_mapPins = s; }
 
 signals:
     // Pedido pra abrir um documento no editor e saltar até o trecho comentado.
@@ -53,7 +56,7 @@ private slots:
     void applyTheme();
 
 private:
-    enum class Tab { Comments = 0, Notes = 1, Names = 2, Map = 3 };
+    enum class Tab { Comments = 0, Notes = 1, Names = 2 };
     enum class SortMode { Chapters, Creation };
     enum class NameCategory { Character, Place, Weapon };
     enum class Gender { Female, Male };
@@ -71,6 +74,7 @@ private:
     void ensureNotePopup();
     void openNoteCreate();
     void openNoteEditById(const QString& id);
+    void openMapPanel();
     QWidget* buildNamesPage();
     void setNameCategory(NameCategory c);
     void updateGenderVisibility();
@@ -100,8 +104,10 @@ private:
 
     QToolButton* m_tabComments = nullptr;
     QToolButton* m_tabNotes = nullptr;
-    QToolButton* m_tabMap = nullptr;
     QToolButton* m_namesBtn = nullptr; // acesso discreto ao gerador, no header
+    QToolButton* m_mapBtn = nullptr;   // acesso ao painel do mapa, no header
+    MapPanel* m_mapPanel = nullptr;
+    MapPinsStore* m_mapPins = nullptr;
 
     QStackedWidget* m_stack = nullptr;
     QScrollArea* m_commentsScroll = nullptr;
