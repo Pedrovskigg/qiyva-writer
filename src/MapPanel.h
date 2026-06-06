@@ -14,6 +14,8 @@ class QFrame;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QListWidget;
+class QListWidgetItem;
 class MapView;
 class MapPinsStore;
 class ProjectModel;
@@ -44,6 +46,9 @@ private slots:
     void onNavItemExpanded(QTreeWidgetItem* item);
     void onNavItemClicked(QTreeWidgetItem* item, int column);
     void searchAndGo();
+    void updateSuggestions(const QString& text); // autocomplete da busca
+    void acceptSuggestion(QListWidgetItem* item);
+    void positionSuggest();
     void onPinRequested(double lon, double lat);
     void onPinClicked(QString id);
     void savePinFromPopup();
@@ -94,6 +99,7 @@ private:
     QToolButton* m_pinBtn = nullptr;
     QLineEdit* m_search = nullptr;
     QTreeWidget* m_navTree = nullptr;
+    QListWidget* m_suggest = nullptr; // popup de sugestões da busca
 
     // Popup de criar/editar pin.
     QFrame* m_pinPopup = nullptr;

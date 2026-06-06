@@ -8,10 +8,12 @@
 
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
@@ -33,6 +35,19 @@ constexpr int kHandleW = 6;
 constexpr int kCornerSz = 14;
 constexpr int kMinW = 380;
 constexpr int kMinH = 300;
+
+// Minúsculas sem acento, pra busca casar "São" com "sao", "Brasília" com "brasi".
+QString normLatin(const QString& s)
+{
+    const QString d = s.normalized(QString::NormalizationForm_D);
+    QString out;
+    out.reserve(d.size());
+    for (const QChar ch : d) {
+        if (ch.category() == QChar::Mark_NonSpacing) continue; // remove diacríticos
+        out.append(ch.toLower());
+    }
+    return out;
+}
 }
 
 MapPanel::MapPanel(MapPinsStore* pins, ProjectModel* model, QWidget* parent)
@@ -121,7 +136,15 @@ MapPanel::MapPanel(MapPinsStore* pins, ProjectModel* model, QWidget* parent)
     m_search->setObjectName(QStringLiteral("mapSearch"));
     m_search->setPlaceholderText(tr("Buscar lugar…"));
     m_search->setClearButtonEnabled(true);
-    connect(m_search, &QLineEdit::returnPressed, this, &MapPanel::searchAndGo);
+    connect(m_search, &QLineEdit::textChanged, this, &MapPanel::updateSuggestions);
+    connect(m_search, &QLineEdit::returnPressed, this, [this] {
+        // Enter aceita a sugestão destacada; sem popup, faz a busca direta.
+        if (m_suggest && m_suggest->isVisible() && m_suggest->currentItem())
+            acceptSuggestion(m_suggest->currentItem());
+        else
+            searchAndGo();
+    });
+    m_search->installEventFilter(this); // setas/Esc navegam no popup
     navLay->addWidget(m_search, 1);
 
     root->addWidget(navBar);
@@ -671,8 +694,125 @@ void MapPanel::searchAndGo()
     if (best) m_map->flyToPoint(best->lon, best->lat);
 }
 
+void MapPanel::updateSuggestions(const QString& text)
+{
+    if (!m_search) return;
+    const QString q = text.trimmed();
+    if (q.size() < 2) { if (m_suggest) m_suggest->hide(); return; }
+
+    if (!m_suggest) {
+        m_suggest = new QListWidget(this);
+        m_suggest->setObjectName(QStringLiteral("mapSuggest"));
+        m_suggest->setFocusPolicy(Qt::NoFocus); // foco fica no campo de texto
+        m_suggest->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        connect(m_suggest, &QListWidget::itemClicked, this, &MapPanel::acceptSuggestion);
+    }
+
+    const QString nq = normLatin(q);
+    const GeoData& geo = GeoData::instance();
+    m_suggest->clear();
+
+    auto add = [&](const QString& name, const QString& sub,
+                   const QString& type, int idx) {
+        auto* it = new QListWidgetItem(name + QStringLiteral("   —   ") + sub, m_suggest);
+        it->setData(Qt::UserRole, type);
+        it->setData(Qt::UserRole + 1, idx);
+    };
+
+    // Ordem: países, depois estados, depois cidades (por população).
+    int nC = 0;
+    for (int i = 0; i < geo.countries().size() && nC < 5; ++i) {
+        const GeoData::Country& c = geo.countries().at(i);
+        if (normLatin(c.name).startsWith(nq) || normLatin(c.nameEn).startsWith(nq)) {
+            add(c.name, tr("País"), QStringLiteral("country"), i);
+            ++nC;
+        }
+    }
+    int nS = 0;
+    for (int i = 0; i < geo.states().size() && nS < 5; ++i) {
+        const GeoData::State& s = geo.states().at(i);
+        if (normLatin(s.name).startsWith(nq)) {
+            add(s.name, tr("Estado · %1").arg(s.country), QStringLiteral("state"), i);
+            ++nS;
+        }
+    }
+    struct Cm { int idx; qint64 pop; };
+    QVector<Cm> cm;
+    for (int i = 0; i < geo.places().size(); ++i) {
+        const GeoData::Place& p = geo.places().at(i);
+        if (normLatin(p.name).startsWith(nq) || normLatin(p.asciiName).startsWith(nq))
+            cm.push_back({ i, p.population });
+    }
+    std::sort(cm.begin(), cm.end(), [](const Cm& a, const Cm& b) { return a.pop > b.pop; });
+    for (int k = 0; k < cm.size() && k < 7; ++k) {
+        const GeoData::Place& p = geo.places().at(cm[k].idx);
+        const QString where = p.state.isEmpty() ? p.countryCode : p.state;
+        add(p.name, where.isEmpty() ? tr("Cidade") : tr("Cidade · %1").arg(where),
+            QStringLiteral("city"), cm[k].idx);
+    }
+
+    if (m_suggest->count() == 0) { m_suggest->hide(); return; }
+    m_suggest->setCurrentRow(0);
+    positionSuggest();
+    m_suggest->show();
+    m_suggest->raise();
+}
+
+void MapPanel::positionSuggest()
+{
+    if (!m_suggest || !m_search) return;
+    const QPoint tl = m_search->mapTo(this, QPoint(0, m_search->height() + 2));
+    const int rows = qMin(12, m_suggest->count());
+    const int rowH = qMax(22, m_suggest->sizeHintForRow(0));
+    m_suggest->setGeometry(tl.x(), tl.y(), m_search->width(), rows * rowH + 6);
+}
+
+void MapPanel::acceptSuggestion(QListWidgetItem* item)
+{
+    if (!item || !m_map || !m_search) return;
+    const GeoData& geo = GeoData::instance();
+    const QString type = item->data(Qt::UserRole).toString();
+    const int idx = item->data(Qt::UserRole + 1).toInt();
+
+    QString name;
+    if (type == QStringLiteral("country") && idx < geo.countries().size()) {
+        const GeoData::Country& c = geo.countries().at(idx);
+        name = c.name;
+        m_map->flyToBounds(c.bounds);
+    } else if (type == QStringLiteral("state") && idx < geo.states().size()) {
+        const GeoData::State& s = geo.states().at(idx);
+        name = s.name;
+        if (!s.bounds.isNull()) m_map->flyToBounds(s.bounds.adjusted(-1, -1, 1, 1));
+    } else if (type == QStringLiteral("city") && idx < geo.places().size()) {
+        const GeoData::Place& p = geo.places().at(idx);
+        name = p.name;
+        m_map->flyToPoint(p.lon, p.lat);
+    }
+    if (!name.isEmpty()) {
+        m_search->blockSignals(true); // não reabrir o popup ao preencher
+        m_search->setText(name);
+        m_search->blockSignals(false);
+    }
+    m_suggest->hide();
+}
+
 bool MapPanel::eventFilter(QObject* watched, QEvent* event)
 {
+    // Setas/Esc no campo de busca navegam o popup de sugestões.
+    if (watched == m_search && event->type() == QEvent::KeyPress
+        && m_suggest && m_suggest->isVisible() && m_suggest->count() > 0) {
+        auto* ke = static_cast<QKeyEvent*>(event);
+        if (ke->key() == Qt::Key_Down) {
+            m_suggest->setCurrentRow(qMin(m_suggest->currentRow() + 1, m_suggest->count() - 1));
+            return true;
+        }
+        if (ke->key() == Qt::Key_Up) {
+            m_suggest->setCurrentRow(qMax(m_suggest->currentRow() - 1, 0));
+            return true;
+        }
+        if (ke->key() == Qt::Key_Escape) { m_suggest->hide(); return true; }
+    }
+
     // Redimensionamento pelas alças das bordas.
     auto edgeOf = [this](QObject* o) -> ResizeEdge {
         if (o == m_hL)  return ResizeEdge::Left;
@@ -835,6 +975,13 @@ void MapPanel::applyTheme()
         }
         #mapPinCancel:hover { color: %3; background: %5; }
         #mapPinDelete:hover { color: %3; background: %5; }
+        #mapSuggest {
+            background: %1; color: %3; border: 1px solid %2;
+            border-radius: 8px; font-size: 12px; outline: none;
+        }
+        #mapSuggest::item { padding: 4px 9px; border-radius: 5px; }
+        #mapSuggest::item:hover { background: %5; }
+        #mapSuggest::item:selected { background: %7; color: %3; }
     )")
         .arg(Theme::panelBackground(), Theme::borderStrong(), Theme::textPrimary(),
              Theme::textMuted(), Theme::hoverStrong(), Theme::inputBackground(),

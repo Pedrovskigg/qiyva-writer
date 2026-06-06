@@ -14,8 +14,10 @@
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QEasingCurve>
 #include <QSettings>
 #include <QShowEvent>
+#include <QVariantAnimation>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -45,6 +47,43 @@ QColor mix(const QColor& a, const QColor& b, double t)
     return QColor(int(a.red()   + (b.red()   - a.red())   * t),
                   int(a.green() + (b.green() - a.green()) * t),
                   int(a.blue()  + (b.blue()  - a.blue())  * t));
+}
+
+// Cor da terra por faixa climática (latitude). Mesma paleta do gradiente do mapa
+// plano, pra que o globo combine com ele. No plano é um QLinearGradient vertical;
+// no globo a latitude não é linear na tela, então colorimos por anel.
+QColor climateColor(double lat)
+{
+    struct Stop { double lat; QColor c; };
+    static const Stop stops[] = {
+        {  90.0, QColor(0xc4, 0xcc, 0xd1) }, // polar (gelo)
+        {  72.0, QColor(0xa6, 0xae, 0xa4) }, // tundra
+        {  58.0, QColor(0x66, 0x7a, 0x5d) }, // boreal escuro
+        {  44.0, QColor(0x84, 0x9b, 0x55) }, // temperado
+        {  33.0, QColor(0xa3, 0x9a, 0x58) }, // estepe
+        {  24.0, QColor(0xc2, 0xa6, 0x62) }, // árido / bege
+        {  15.0, QColor(0x8d, 0x8c, 0x4a) }, // savana
+        {   6.0, QColor(0x57, 0x88, 0x42) }, // tropical
+        {   0.0, QColor(0x46, 0x78, 0x39) }, // equatorial escuro
+        {  -6.0, QColor(0x57, 0x88, 0x42) },
+        { -15.0, QColor(0x8d, 0x8c, 0x4a) },
+        { -24.0, QColor(0xc2, 0xa6, 0x62) },
+        { -33.0, QColor(0xa3, 0x9a, 0x58) },
+        { -44.0, QColor(0x84, 0x9b, 0x55) },
+        { -58.0, QColor(0x66, 0x7a, 0x5d) },
+        { -72.0, QColor(0xa6, 0xae, 0xa4) },
+        { -90.0, QColor(0xc4, 0xcc, 0xd1) },
+    };
+    const int n = int(std::size(stops));
+    if (lat >= stops[0].lat)     return stops[0].c;
+    if (lat <= stops[n - 1].lat) return stops[n - 1].c;
+    for (int i = 0; i < n - 1; ++i) {
+        if (lat <= stops[i].lat && lat >= stops[i + 1].lat) {
+            const double t = (stops[i].lat - lat) / (stops[i].lat - stops[i + 1].lat);
+            return mix(stops[i].c, stops[i + 1].c, t);
+        }
+    }
+    return stops[0].c;
 }
 
 constexpr double kPi = 3.14159265358979323846;
@@ -193,9 +232,18 @@ void MapView::leaveEvent(QEvent*)
 
 void MapView::hitTest(const QPoint& pos)
 {
-    const GeoData& geo = GeoData::instance();
     const QPointF ll = screenToLonLat(QPointF(pos));
     const double r = (m_fitScale > 0.0) ? m_scale / m_fitScale : 1.0;
+    pickFeatureAt(ll, pos, r, [this](double lon, double lat, bool* vis) {
+        if (vis) *vis = true;
+        return project(lon, lat);
+    });
+}
+
+void MapView::pickFeatureAt(const QPointF& ll, const QPoint& pos, double r,
+                            const std::function<QPointF(double, double, bool*)>& proj)
+{
+    const GeoData& geo = GeoData::instance();
 
     // 1) Cidade próxima do clique (mesma visibilidade do desenho).
     const qint64 thr =
@@ -214,7 +262,10 @@ void MapView::hitTest(const QPoint& pos)
             || (pl.isCapital() && r >= 2.0)
             || (pl.isStateCapital() && r >= 4.5);
         if (!show) continue;
-        const double d = QLineF(project(pl.lon, pl.lat), QPointF(pos)).length();
+        bool vis = false;
+        const QPointF s = proj(pl.lon, pl.lat, &vis);
+        if (!vis) continue; // no globo, cidade no lado de trás não conta
+        const double d = QLineF(s, QPointF(pos)).length();
         if (d < bestD) { bestD = d; bestCity = &pl; }
     }
     if (bestCity) {
@@ -294,6 +345,46 @@ void MapView::showEvent(QShowEvent* event)
     if (!m_fitted) fitToWidget();
 }
 
+// Converte uma escala do mapa plano (pixels/grau) no zoom equivalente do globo,
+// pra busca/navegação levarem ao mesmo nível de detalhe nos dois modos.
+double MapView::scaleToGlobeZoom(double scale) const
+{
+    const double k = qMin(width(), height()) * 0.42 * kPi / 180.0; // px/grau a zoom=1
+    return (k > 0.0) ? std::clamp(scale / k, 0.6, 12.0) : m_globeZoom;
+}
+
+void MapView::startGlobeFly(double lon, double lat, double zoom)
+{
+    lat = std::clamp(lat, -89.0, 89.0);
+    // Caminho mais curto em longitude (trata o antimeridiano: 170 -> -170 = +20).
+    double dLon = lon - m_globeLon0;
+    while (dLon >  180.0) dLon -= 360.0;
+    while (dLon < -180.0) dLon += 360.0;
+    m_flyLonFrom = m_globeLon0; m_flyLonDelta = dLon;
+    m_flyLatFrom = m_globeLat0; m_flyLatTo   = lat;
+    m_flyZoomFrom = m_globeZoom; m_flyZoomTo = zoom;
+
+    if (!m_flyAnim) {
+        m_flyAnim = new QVariantAnimation(this);
+        m_flyAnim->setStartValue(0.0);
+        m_flyAnim->setEndValue(1.0);
+        m_flyAnim->setEasingCurve(QEasingCurve::InOutCubic);
+        connect(m_flyAnim, &QVariantAnimation::valueChanged, this,
+                [this](const QVariant& v) {
+                    const double t = v.toDouble();
+                    m_globeLon0 = m_flyLonFrom + m_flyLonDelta * t;
+                    m_globeLat0 = m_flyLatFrom + (m_flyLatTo - m_flyLatFrom) * t;
+                    m_globeZoom = m_flyZoomFrom + (m_flyZoomTo - m_flyZoomFrom) * t;
+                    update();
+                });
+    }
+    m_flyAnim->stop();
+    // Duração proporcional ao quanto vai girar (perto = rápido, longe = ~1.1s).
+    const double travel = std::abs(dLon) + std::abs(lat - m_flyLatFrom);
+    m_flyAnim->setDuration(int(420 + std::min(1.0, travel / 220.0) * 680));
+    m_flyAnim->start();
+}
+
 void MapView::flyToBounds(const QRectF& b)
 {
     if (!m_fitted) fitToWidget();
@@ -302,8 +393,12 @@ void MapView::flyToBounds(const QRectF& b)
     const double sy = height() / b.height();
     double sc = std::min(sx, sy) * 0.75; // folga nas bordas
     sc = std::clamp(sc, m_fitScale, m_fitScale * 40.0);
-    m_scale = sc;
     const QPointF c = b.center();
+    if (m_globe) { // gira (animado) até a região e ajusta o zoom equivalente
+        startGlobeFly(c.x(), c.y(), scaleToGlobeZoom(sc));
+        return;
+    }
+    m_scale = sc;
     m_offset = QPointF(width() / 2.0 - c.x() * m_scale,
                        height() / 2.0 + c.y() * m_scale);
     update();
@@ -312,6 +407,10 @@ void MapView::flyToBounds(const QRectF& b)
 void MapView::flyToPoint(double lon, double lat)
 {
     if (!m_fitted) fitToWidget();
+    if (m_globe) {
+        startGlobeFly(lon, lat, scaleToGlobeZoom(m_fitScale * 12.0));
+        return;
+    }
     m_scale = std::clamp(m_fitScale * 12.0, m_fitScale, m_fitScale * 40.0);
     m_offset = QPointF(width() / 2.0 - lon * m_scale,
                        height() / 2.0 + lat * m_scale);
@@ -363,6 +462,15 @@ double MapView::globeRadius() const
     return qMin(width(), height()) * 0.42 * m_globeZoom;
 }
 
+// "r" do globo equivalente ao zoom do mapa plano: pixels por grau no centro do
+// disco / escala de enquadramento. Assim as mesmas faixas de detalhe (cidades,
+// estados, rótulos) valem pros dois modos.
+double MapView::globeDetailRatio() const
+{
+    const double pxPerDeg = globeRadius() * kPi / 180.0;
+    return (m_fitScale > 0.0) ? pxPerDeg / m_fitScale : m_globeZoom;
+}
+
 QPointF MapView::projectGlobe(double lon, double lat, bool* visible) const
 {
     const double D = kPi / 180.0;
@@ -412,13 +520,16 @@ void MapView::paintEvent(QPaintEvent*)
     const QColor appBg(Theme::appBackground());
     const QColor textP(Theme::textPrimary());
     // Texturizado: esquema físico próprio (independe do tema). Simples: tema.
-    const QColor water      = tex ? QColor(0x9f, 0xbd, 0xd0) : appBg;
+    const QColor water      = tex ? QColor(0x16, 0x33, 0x60) : appBg;
     const QColor stroke     = tex ? QColor(0x3c, 0x3c, 0x3c) : mix(appBg, textP, 0.92);
     const QColor capitalDot = tex ? QColor(0xb0, 0x3a, 0x2e) : QColor(Theme::accentDefault());
-    const QColor cityDot    = tex ? QColor(0x55, 0x55, 0x55) : QColor(Theme::textMuted());
-    const QColor labelColor = tex ? QColor(0x2b, 0x2b, 0x2b) : textP;
-    const QColor bigLabel   = tex ? QColor(0x16, 0x16, 0x16) : QColor(Theme::textBright());
-    const QColor haloColor  = tex ? QColor(0xff, 0xff, 0xff) : water;
+    const QColor cityDot     = tex ? QColor(0x55, 0x55, 0x55) : QColor(Theme::textMuted());
+    const QColor stateCapDot = tex ? QColor(0x22, 0x22, 0x22) : QColor(Theme::textBright());
+    // Etiqueta de mapa físico: texto claro com contorno escuro lê melhor sobre o
+    // terreno verde/colorido do que texto escuro com halo branco.
+    const QColor labelColor  = tex ? QColor(0xf2, 0xf2, 0xf2) : textP;
+    const QColor bigLabel    = tex ? QColor(0xff, 0xff, 0xff) : QColor(Theme::textBright());
+    const QColor haloColor   = tex ? QColor(0x10, 0x10, 0x10) : water;
 
     p.fillRect(rect(), water);
 
@@ -427,12 +538,14 @@ void MapView::paintEvent(QPaintEvent*)
 
     // Desenha texto com um leve contorno (halo) pra os nomes se destacarem do
     // fundo em vez de se perderem na terra.
+    // Contorno completo (8 direções) pra o nome se destacar do terreno em
+    // qualquer cor — a cruz de 4 deixava cantos vazando e baixo contraste.
+    static const QPointF kHaloOff[] = {
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
     auto haloText = [&](const QPointF& at, const QString& t, const QColor& fg) {
         p.setPen(haloColor);
-        p.drawText(at + QPointF(1, 0), t);
-        p.drawText(at + QPointF(-1, 0), t);
-        p.drawText(at + QPointF(0, 1), t);
-        p.drawText(at + QPointF(0, -1), t);
+        for (const QPointF& o : kHaloOff) p.drawText(at + o, t);
         p.setPen(fg);
         p.drawText(at, t);
     };
@@ -461,23 +574,8 @@ void MapView::paintEvent(QPaintEvent*)
             const double yBot = project(0.0, -90.0).y();
             QLinearGradient climate(QPointF(0, yTop), QPointF(0, yBot));
             auto fr = [](double lat) { return (90.0 - lat) / 180.0; };
-            const QColor polar(0xc4, 0xcc, 0xd1);     // gelo
-            const QColor boreal(0x8f, 0x9e, 0x8a);    // subpolar
-            const QColor temperate(0x86, 0xa0, 0x64); // temperado
-            const QColor arid(0xc2, 0xa2, 0x63);      // subtropical seco
-            const QColor tropic(0x6e, 0x9a, 0x54);    // tropical
-            const QColor equator(0x5e, 0x8c, 0x4e);   // equatorial
-            climate.setColorAt(fr(90),   polar);
-            climate.setColorAt(fr(60),   boreal);
-            climate.setColorAt(fr(40),   temperate);
-            climate.setColorAt(fr(25),   arid);
-            climate.setColorAt(fr(12),   tropic);
-            climate.setColorAt(fr(0),    equator);
-            climate.setColorAt(fr(-12),  tropic);
-            climate.setColorAt(fr(-25),  arid);
-            climate.setColorAt(fr(-40),  temperate);
-            climate.setColorAt(fr(-60),  boreal);
-            climate.setColorAt(fr(-90),  polar);
+            for (double lat = 90.0; lat >= -90.0; lat -= 10.0)
+                climate.setColorAt(fr(lat), climateColor(lat));
             landBrush = QBrush(climate);
         } else {
             landBrush = mix(appBg, textP, 0.26); // terra única do tema
@@ -564,7 +662,7 @@ void MapView::paintEvent(QPaintEvent*)
                 p.setBrush(capitalDot);
                 p.drawEllipse(v.s, 3.5, 3.5);
             } else if (v.p->isStateCapital()) {
-                p.setBrush(bigLabel);
+                p.setBrush(stateCapDot);
                 p.drawEllipse(v.s, 2.8, 2.8);
             } else {
                 p.setBrush(cityDot);
@@ -742,12 +840,16 @@ void MapView::paintGlobe(QPainter& p)
     const QColor appBg(Theme::appBackground());
     const QColor textP(Theme::textPrimary());
     const QColor space  = tex ? QColor(0x0a, 0x0f, 0x18) : mix(appBg, QColor(0, 0, 0), 0.35);
-    const QColor ocean  = tex ? QColor(0x9f, 0xbd, 0xd0) : appBg;
-    const QColor land   = tex ? QColor(0x6e, 0x9a, 0x54) : mix(appBg, textP, 0.26);
-    const QColor stroke = tex ? QColor(0x3c, 0x3c, 0x3c) : mix(appBg, textP, 0.92);
-    const QColor capitalDot = tex ? QColor(0xb0, 0x3a, 0x2e) : QColor(Theme::accentDefault());
-    const QColor labelColor = tex ? QColor(0x16, 0x16, 0x16) : QColor(Theme::textBright());
-    const QColor haloColor  = tex ? QColor(0xff, 0xff, 0xff) : ocean;
+    const QColor ocean  = tex ? QColor(0x16, 0x33, 0x60) : appBg;
+    const QColor land        = tex ? QColor(0x6e, 0x9a, 0x54) : mix(appBg, textP, 0.26);
+    const QColor stroke      = tex ? QColor(0x3c, 0x3c, 0x3c) : mix(appBg, textP, 0.92);
+    const QColor stateStroke = tex ? QColor(0x5a, 0x5a, 0x5a) : mix(appBg, textP, 0.74);
+    const QColor capitalDot  = tex ? QColor(0xb0, 0x3a, 0x2e) : QColor(Theme::accentDefault());
+    const QColor cityDot     = tex ? QColor(0x55, 0x55, 0x55) : QColor(Theme::textMuted());
+    const QColor stateCapDot = tex ? QColor(0x22, 0x22, 0x22) : QColor(Theme::textBright());
+    const QColor labelColor  = tex ? QColor(0xf2, 0xf2, 0xf2) : textP;
+    const QColor bigLabel    = tex ? QColor(0xff, 0xff, 0xff) : QColor(Theme::textBright());
+    const QColor haloColor   = tex ? QColor(0x10, 0x10, 0x10) : ocean;
     const QColor pinColor(Theme::accentDefault());
 
     p.fillRect(rect(), space);
@@ -755,87 +857,456 @@ void MapView::paintGlobe(QPainter& p)
     const QPointF cen(width() / 2.0, height() / 2.0);
     const double R = globeRadius();
 
+    // Estrelas de fundo (só texturizado): posições determinísticas por hash pra
+    // não tremularem entre frames. Ficam atrás do disco, que é opaco.
+    if (tex) {
+        auto hash = [](quint32 n) {
+            n = (n ^ 61u) ^ (n >> 16); n *= 9u; n ^= n >> 4;
+            n *= 0x27d4eb2du; n ^= n >> 15; return n;
+        };
+        const int W = width(), H = height();
+        const int count = qMax(60, (W * H) / 7000);
+        p.setPen(Qt::NoPen);
+        for (int i = 0; i < count; ++i) {
+            const quint32 h1 = hash(quint32(i) * 2654435761u);
+            const quint32 h2 = hash(h1 ^ 0x9e3779b9u);
+            const double sx = double(h1 % 100000) / 100000.0 * W;
+            const double sy = double(h2 % 100000) / 100000.0 * H;
+            const double br = double(hash(h2) % 100) / 100.0;
+            const double rad = (br > 0.92) ? 1.5 : (br > 0.7 ? 1.0 : 0.6);
+            p.setBrush(QColor(255, 255, 255, int(40 + br * 160)));
+            p.drawEllipse(QPointF(sx, sy), rad, rad);
+        }
+    }
+
     p.setPen(QPen(mix(ocean, QColor(0, 0, 0), 0.4), 1.5));
     p.setBrush(ocean);
     p.drawEllipse(cen, R, R);
 
     const GeoData& geo = GeoData::instance();
 
-    // Projeta um anel pro globo, grampeando vértices "de trás" na borda do disco.
+    // Recorta cada anel contra o hemisfério visível (plano z=0 da câmera) e
+    // projeta. Grampear os vértices "de trás" na borda criava leques/triângulos
+    // gigantes; o recorte de verdade segue a silhueta do globo, sem fragmentos.
+    struct V3 { double x, y, z; };
+    const double D = kPi / 180.0;
+    const double la0 = m_globeLat0 * D;
+    const double sLa0 = std::sin(la0), cLa0 = std::cos(la0);
+    auto to3D = [&](const QPointF& ll) -> V3 {
+        const double la = ll.y() * D, lo = (ll.x() - m_globeLon0) * D;
+        const double cLa = std::cos(la), sLa = std::sin(la), cLo = std::cos(lo);
+        return V3{ cLa * std::sin(lo),                       // x = direita na tela
+                   cLa0 * sLa - sLa0 * cLa * cLo,            // y = cima na tela
+                   sLa0 * sLa + cLa0 * cLa * cLo };          // z = em direção à câmera
+    };
+    auto toScreen = [&](const V3& v) {
+        return QPointF(cen.x() + R * v.x, cen.y() - R * v.y);
+    };
     auto ringToPoly = [&](const QPolygonF& ring) {
         QPolygonF poly;
-        poly.reserve(ring.size());
-        for (const QPointF& pt : ring) {
-            bool vis;
-            QPointF s = projectGlobe(pt.x(), pt.y(), &vis);
-            if (!vis) {
-                QPointF d = s - cen;
-                const double l = std::hypot(d.x(), d.y());
-                if (l > 0.0) s = cen + d * (R / l);
+        const int n = ring.size();
+        if (n == 0) return poly;
+        QVector<V3> in;
+        in.reserve(n);
+        for (const QPointF& pt : ring) in.push_back(to3D(pt));
+        // Sutherland-Hodgman contra z >= 0; o cruzamento do horizonte é
+        // reprojetado na borda do disco (normalizado pra cair na circunferência).
+        for (int i = 0; i < n; ++i) {
+            const V3& A = in[i];
+            const V3& B = in[(i + 1) % n];
+            const bool aIn = A.z >= 0.0, bIn = B.z >= 0.0;
+            if (aIn) poly << toScreen(A);
+            if (aIn != bIn) {
+                const double t = A.z / (A.z - B.z);
+                V3 I{ A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t, 0.0 };
+                const double l = std::hypot(I.x, I.y);
+                if (l > 1e-9) { I.x /= l; I.y /= l; }
+                poly << toScreen(I);
             }
-            poly << s;
         }
         return poly;
     };
+    static const QPointF kHaloOff[] = {
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
     auto haloText = [&](const QPointF& at, const QString& t, const QColor& fg) {
         p.setPen(haloColor);
-        p.drawText(at + QPointF(1, 0), t);  p.drawText(at + QPointF(-1, 0), t);
-        p.drawText(at + QPointF(0, 1), t);  p.drawText(at + QPointF(0, -1), t);
+        for (const QPointF& o : kHaloOff) p.drawText(at + o, t);
         p.setPen(fg); p.drawText(at, t);
     };
+    // Um anel só é "da frente" se todos os vértices estão no hemisfério visível —
+    // evita cordas feias na borda ao traçar contornos (estados) sem preenchimento.
+    auto frontRing = [&](const QPolygonF& ring) {
+        for (const QPointF& pt : ring) {
+            bool vis;
+            projectGlobe(pt.x(), pt.y(), &vis);
+            if (!vis) return false;
+        }
+        return true;
+    };
+
+    const double r = globeDetailRatio();
+    const bool lvlContinents = r < 2.0;
+    const bool lvlCountries  = (r >= 2.0 && r < 4.5);
+    const bool lvlStates     = (r >= 4.5 && r < 9.0);
+    const double pxPerDeg = R * kPi / 180.0;
 
     QPainterPath clip;
     clip.addEllipse(cen, R, R);
     p.setClipPath(clip);
-    p.setBrush(land);
+
+    // Terra: gradiente climático contínuo (textura) ou cor única do tema. Um único
+    // brush pra todos os países evita o "mosaico" de cores que surgia ao colorir
+    // cada anel sozinho (arquipélagos e países pequenos viravam quadradinhos
+    // coloridos, e continentes grandes ficavam chapados).
+    QBrush landBrush = land;
+    if (tex) {
+        // Faixas posicionadas pela projeção do meridiano central, pra acompanharem
+        // a curvatura da esfera (gelo nos polos -> verde no equador).
+        auto yOf = [&](double lat) {
+            bool v;
+            return projectGlobe(m_globeLon0, lat, &v).y();
+        };
+        const double yN = yOf(90.0), yS = yOf(-90.0);
+        const double span = yS - yN;
+        QLinearGradient g(QPointF(0, yN), QPointF(0, yS));
+        double lastT = -1.0;
+        for (double lat = 90.0; lat >= -90.0; lat -= 15.0) {
+            const double t = (span != 0.0)
+                ? std::clamp((yOf(lat) - yN) / span, 0.0, 1.0) : 0.0;
+            if (t <= lastT) continue; // pula faixas que "voltam" no polo de trás
+            g.setColorAt(t, climateColor(lat));
+            lastT = t;
+        }
+        landBrush = QBrush(g);
+    }
+    QPainterPath landPath; // contorno da terra, pra recortar as manchas de cor
+    p.setBrush(landBrush);
     p.setPen(QPen(stroke, 1.0));
     for (const GeoData::Country& c : geo.countries())
-        for (const QPolygonF& ring : c.rings)
-            p.drawPolygon(ringToPoly(ring));
+        for (const QPolygonF& ring : c.rings) {
+            const QPolygonF sp = ringToPoly(ring);
+            p.drawPolygon(sp);
+            if (tex && sp.size() >= 3) {
+                const QRectF bb = sp.boundingRect();
+                if (bb.width() * bb.height() > 60.0) landPath.addPolygon(sp);
+            }
+        }
 
-    if (m_hoverCountry >= 0 && m_hoverCountry < geo.countries().size()) {
-        p.setBrush(QColor(255, 255, 255, 48));
-        p.setPen(QPen(pinColor, 2.0));
-        for (const QPolygonF& ring : geo.countries().at(m_hoverCountry).rings)
-            p.drawPolygon(ringToPoly(ring));
+    // Variação de cor do terreno: manchas orgânicas (verde escuro/claro, bege,
+    // marrom) sobre o gradiente base, recortadas à terra. Acompanham a rotação e
+    // ficam visíveis em qualquer zoom (não desbotam como as nuvens).
+    if (tex && !landPath.isEmpty()) {
+        static const QColor kTerr[] = {
+            QColor(0x3b, 0x55, 0x2e), QColor(0x9c, 0xb2, 0x66),
+            QColor(0xbe, 0xa2, 0x62), QColor(0x84, 0x64, 0x3c),
+            QColor(0x6d, 0x7e, 0x3a), QColor(0x53, 0x73, 0x3e),
+            QColor(0xcb, 0xb6, 0x80), QColor(0x6f, 0x4f, 0x33),
+        };
+        const int nTerr = int(std::size(kTerr));
+        quint32 ss = 0x9e3779b1u;
+        auto rs = [&]() {
+            ss = ss * 1664525u + 1013904223u;
+            return double(ss >> 8) / double(0x01000000u);
+        };
+        p.save();
+        p.setClipPath(landPath, Qt::IntersectClip);
+        p.setPen(Qt::NoPen);
+        const int splotches = 90;
+        for (int s = 0; s < splotches; ++s) {
+            const double slat = -78.0 + rs() * 156.0;
+            const double slon = -180.0 + rs() * 360.0;
+            const int ci = int(rs() * nTerr) % nTerr;
+            const double sa = 0.16 + rs() * 0.26;
+            const double rr = rs();
+            const double fl = 0.55 + rs() * 0.5;
+            const V3 cn = to3D(QPointF(slon, slat));
+            if (cn.z <= 0.05) continue; // atrás do globo
+            const int alpha = int(std::clamp(sa * cn.z, 0.0, 1.0) * 255);
+            if (alpha < 4) continue;
+            const double rpx = (5.0 + rr * 16.0) * pxPerDeg * (0.5 + 0.5 * cn.z);
+            const QColor col = kTerr[ci];
+            p.save();
+            p.translate(toScreen(cn));
+            p.scale(1.0, fl);
+            QRadialGradient rg(QPointF(0, 0), rpx);
+            rg.setColorAt(0.0, QColor(col.red(), col.green(), col.blue(), alpha));
+            rg.setColorAt(0.7, QColor(col.red(), col.green(), col.blue(), int(alpha * 0.45)));
+            rg.setColorAt(1.0, QColor(col.red(), col.green(), col.blue(), 0));
+            p.setBrush(rg);
+            p.drawEllipse(QPointF(0, 0), rpx, rpx);
+            p.restore();
+        }
+        p.restore();
     }
+
+    // Divisões internas (estados): contorno tracejado, igual ao mapa plano.
+    if (r >= 3.0) {
+        p.setBrush(Qt::NoBrush);
+        QPen statePen(stateStroke, 1.1, Qt::DashLine);
+        statePen.setDashPattern({3.0, 2.5});
+        p.setPen(statePen);
+        for (const GeoData::State& st : geo.states())
+            for (const QPolygonF& ring : st.rings)
+                if (frontRing(ring)) p.drawPolygon(ringToPoly(ring));
+    }
+
+    // Destaque do hover (estado em zoom, senão país sob o cursor).
+    {
+        auto drawHi = [&](const QVector<QPolygonF>& rings) {
+            p.setBrush(QColor(255, 255, 255, 48));
+            p.setPen(QPen(pinColor, 2.0));
+            for (const QPolygonF& ring : rings)
+                p.drawPolygon(ringToPoly(ring));
+        };
+        if (m_hoverState >= 0 && m_hoverState < geo.states().size())
+            drawHi(geo.states().at(m_hoverState).rings);
+        else if (m_hoverCountry >= 0 && m_hoverCountry < geo.countries().size())
+            drawHi(geo.countries().at(m_hoverCountry).rings);
+    }
+
+    // ── Atmosfera, dia/noite e nuvens (planeta visto de longe) ──────────────
+    // Atmosfera/dia-noite somem cedo (atmoFade); as nuvens persistem mais no
+    // zoom (cloudFade), devolvendo o mapa funcional limpo só lá no detalhe.
+    const double atmoFade  = std::clamp((3.0 - r) / 1.5, 0.0, 1.0);
+    const double cloudFade = std::clamp((6.0 - r) / 3.5, 0.0, 1.0);
+    if (tex && (atmoFade > 0.01 || cloudFade > 0.01)) {
+        // Ponto subsolar pela hora UTC atual (sol "de verdade"); usado pelo
+        // dia/noite e pela iluminação das nuvens.
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        const double secs = now.time().msecsSinceStartOfDay() / 1000.0;
+        const double sunLon = 180.0 - secs / 86400.0 * 360.0;
+        const int doy = now.date().dayOfYear();
+        const double sunLat = 23.44 * std::sin(2.0 * kPi * (doy - 80) / 365.0);
+        const V3 sun = to3D(QPointF(sunLon, sunLat));
+
+        if (atmoFade > 0.01) {
+            // Volume esférico: leve escurecimento na borda do disco.
+            QRadialGradient sphere(cen, R);
+            sphere.setColorAt(0.0,  QColor(0, 0, 0, 0));
+            sphere.setColorAt(0.78, QColor(0, 0, 0, 0));
+            sphere.setColorAt(1.0,  QColor(0, 0, 0, int(70 * atmoFade)));
+            p.setPen(Qt::NoPen);
+            p.setBrush(sphere);
+            p.drawEllipse(cen, R, R);
+
+            // Dia/noite.
+            const QColor night(2, 6, 18, int(205 * atmoFade));
+            const double dl = std::hypot(sun.x, sun.y);
+            if (dl < 1e-3) {
+                if (sun.z < 0) { p.setBrush(night); p.drawEllipse(cen, R, R); }
+            } else {
+                const QPointF dir(sun.x / dl, -sun.y / dl); // lado iluminado
+                const QPointF bright = cen + dir * R;
+                const QPointF dark   = cen - dir * R;
+                const double term = std::clamp(0.5 + sun.z * 0.5, 0.06, 0.94);
+                const QColor clear(night.red(), night.green(), night.blue(), 0);
+                QLinearGradient g(bright, dark);
+                g.setColorAt(0.0, clear);
+                g.setColorAt(std::clamp(term - 0.14, 0.0, 1.0), clear);
+                g.setColorAt(std::clamp(term + 0.16, 0.0, 1.0), night);
+                g.setColorAt(1.0, night);
+                p.setBrush(g);
+                p.drawEllipse(cen, R, R);
+            }
+
+            // Brilho atmosférico (rim light) na borda do disco, concentrado na
+            // direção do sol — passa por fora do disco, então sem o recorte.
+            if (dl >= 1e-3) {
+                p.save();
+                p.setClipping(false);
+                const double sunAngle = std::atan2(sun.y, sun.x) * 180.0 / kPi;
+                auto rimGrad = [&](int peak) {
+                    QConicalGradient cg(cen, sunAngle);
+                    cg.setColorAt(0.00, QColor(168, 206, 255, peak));
+                    cg.setColorAt(0.17, QColor(168, 206, 255, int(peak * 0.22)));
+                    cg.setColorAt(0.50, QColor(168, 206, 255, 0));
+                    cg.setColorAt(0.83, QColor(168, 206, 255, int(peak * 0.22)));
+                    cg.setColorAt(1.00, QColor(168, 206, 255, peak));
+                    return cg;
+                };
+                p.setBrush(Qt::NoBrush);
+                p.setPen(QPen(QBrush(rimGrad(int(70 * atmoFade))), 7.0));   // glow externo
+                p.drawEllipse(cen, R + 1.5, R + 1.5);
+                p.setPen(QPen(QBrush(rimGrad(int(185 * atmoFade))), 2.2));  // núcleo
+                p.drawEllipse(cen, R, R);
+                p.restore();
+            }
+        }
+
+        // Nuvens: clusters de blobs achatados (estratiformes), portadas do
+        // MapClouds do Mira 1. Geradas em lon/lat (giram com a Terra), desbotam
+        // na borda (z), no lado noturno (iluminação) e ao dar zoom (cloudFade).
+        if (cloudFade > 0.01) {
+            quint32 seed = 0x1234567u;
+            auto rnd = [&]() {
+                seed = seed * 1664525u + 1013904223u;
+                return double(seed >> 8) / double(0x01000000u);
+            };
+            const int clusters = 30;
+            for (int c = 0; c < clusters; ++c) {
+                const double clat = -68.0 + rnd() * 136.0;
+                const double clon = -180.0 + rnd() * 360.0;
+                const double baseA = 0.24 + rnd() * 0.42;       // opacidade variada
+                const int blobs = 5 + int(rnd() * 7);
+                const double clSize = 0.65 + rnd() * 1.5;       // tamanho do cluster
+                const double flat = 0.4 + rnd() * 0.35;         // achatamento
+                const double cosLat = std::max(0.2, std::cos(clat * kPi / 180.0));
+                for (int b = 0; b < blobs; ++b) {
+                    // Consome todos os rnd() antes de qualquer 'continue', pra a
+                    // sequência (e as nuvens) não mudarem ao girar o globo.
+                    const double dlon = (b == 0 ? 0.0 : (rnd() - 0.5) * 42.0);
+                    const double dlat = (rnd() - 0.5) * 11.0;
+                    const double rr   = rnd();
+                    const V3 cn = to3D(QPointF(clon + dlon / cosLat, clat + dlat));
+                    if (cn.z <= 0.05) continue; // atrás do globo
+                    const double illum = cn.x * sun.x + cn.y * sun.y + cn.z * sun.z;
+                    const double dayF = std::clamp(illum * 1.4 + 0.35, 0.0, 1.0);
+                    const double a = baseA * cn.z * cloudFade * dayF;
+                    if (a < 0.02) continue;
+                    const double rpx = (3.0 + rr * 9.0) * clSize * pxPerDeg
+                                     * (0.55 + 0.45 * cn.z);
+                    p.save();
+                    p.translate(toScreen(cn));
+                    p.scale(1.0, flat);
+                    QRadialGradient rg(QPointF(0, 0), rpx);
+                    rg.setColorAt(0.0,  QColor(246, 244, 238, int(std::min(255.0, 235 * a))));
+                    rg.setColorAt(0.55, QColor(246, 244, 238, int(160 * a)));
+                    rg.setColorAt(1.0,  QColor(246, 244, 238, 0));
+                    p.setPen(Qt::NoPen);
+                    p.setBrush(rg);
+                    p.drawEllipse(QPointF(0, 0), rpx, rpx);
+                    p.restore();
+                }
+            }
+        }
+    }
+
     p.setClipping(false);
 
-    for (const GeoData::Place& place : geo.places()) {
-        if (!place.isCapital()) continue;
-        bool vis;
-        const QPointF s = projectGlobe(place.lon, place.lat, &vis);
-        if (!vis) continue;
-        p.setPen(Qt::NoPen);
-        p.setBrush(capitalDot);
-        p.drawEllipse(s, 3.0, 3.0);
+    // Cidades/municípios: surgem por população conforme o zoom (capitais primeiro).
+    {
+        const qint64 thr =
+              (r < 2.0)  ? Q_INT64_C(9000000000)
+            : (r < 4.5)  ? Q_INT64_C(3000000)
+            : (r < 9.0)  ? Q_INT64_C(700000)
+            : (r < 16.0) ? Q_INT64_C(150000)
+            : (r < 28.0) ? Q_INT64_C(30000)
+                         : Q_INT64_C(0);
+        const bool cityLabels = r >= 6.0;
+
+        struct Vis { QPointF s; const GeoData::Place* p; };
+        QVector<Vis> vis;
+        for (const GeoData::Place& place : geo.places()) {
+            const bool show = place.population >= thr
+                || (place.isCapital() && r >= 2.0)
+                || (place.isStateCapital() && r >= 4.5);
+            if (!show) continue;
+            bool vv;
+            const QPointF s = projectGlobe(place.lon, place.lat, &vv);
+            if (!vv) continue; // lado de trás do globo
+            vis.append({ s, &place });
+        }
+
+        for (const Vis& v : vis) {
+            p.setPen(Qt::NoPen);
+            if (v.p->isCapital()) {
+                p.setBrush(capitalDot);
+                p.drawEllipse(v.s, 3.5, 3.5);
+            } else if (v.p->isStateCapital()) {
+                p.setBrush(stateCapDot);
+                p.drawEllipse(v.s, 2.8, 2.8);
+            } else {
+                p.setBrush(cityDot);
+                p.drawEllipse(v.s, 2.0, 2.0);
+            }
+        }
+
+        if (cityLabels) {
+            auto importance = [](const GeoData::Place* pl) -> qint64 {
+                qint64 k = pl->population;
+                if (pl->isCapital())           k += Q_INT64_C(1000000000000);
+                else if (pl->isStateCapital()) k += Q_INT64_C(1000000000);
+                return k;
+            };
+            std::sort(vis.begin(), vis.end(), [&](const Vis& a, const Vis& b) {
+                return importance(a.p) > importance(b.p);
+            });
+            QFont cf = font();
+            cf.setPointSize(8);
+            QFont cfBold = cf;
+            cfBold.setPointSize(9);
+            cfBold.setBold(true);
+            p.setFont(cf);
+            const QFontMetrics fm(cf);
+            QVector<QRectF> occupied;
+            occupied.reserve(256);
+            for (const Vis& v : vis) {
+                const QString& nm = v.p->name;
+                const QRectF lr(v.s.x() + 6, v.s.y() - fm.height() + 4,
+                                fm.horizontalAdvance(nm) + 5, fm.height());
+                bool collide = false;
+                for (const QRectF& o : occupied)
+                    if (o.intersects(lr)) { collide = true; break; }
+                if (collide) continue;
+                occupied.append(lr);
+                p.setFont(v.p->isCapital() ? cfBold : cf);
+                haloText(v.s + QPointF(6, 4), nm, v.p->isCapital() ? bigLabel : labelColor);
+            }
+        }
     }
 
-    // Rótulos de país (cull pelo horizonte + anti-sobreposição).
-    QFont lf = font();
-    lf.setPointSize(9);
-    lf.setBold(true);
-    p.setFont(lf);
-    const QFontMetrics fm(lf);
-    QVector<const GeoData::Country*> cands;
-    for (const GeoData::Country& c : geo.countries()) cands.append(&c);
-    std::sort(cands.begin(), cands.end(), [](const GeoData::Country* a, const GeoData::Country* b) {
-        return a->bounds.width() * a->bounds.height() > b->bounds.width() * b->bounds.height();
-    });
-    QVector<QRectF> occ;
-    for (const GeoData::Country* c : cands) {
-        const double lon = (c->labelLon != 0.0 || c->labelLat != 0.0) ? c->labelLon : c->bounds.center().x();
-        const double lat = (c->labelLon != 0.0 || c->labelLat != 0.0) ? c->labelLat : c->bounds.center().y();
-        bool vis;
-        const QPointF s = projectGlobe(lon, lat, &vis);
-        if (!vis) continue;
-        const QPointF at = s - QPointF(fm.horizontalAdvance(c->name) / 2.0, 0);
-        const QRectF lr(at.x(), at.y() - fm.height() + 4, fm.horizontalAdvance(c->name) + 4, fm.height());
-        bool col = false;
-        for (const QRectF& o : occ) if (o.intersects(lr)) { col = true; break; }
-        if (col) continue;
-        occ.append(lr);
-        haloText(at, c->name, labelColor);
+    // Rótulos de região por nível de zoom (continente -> país -> estado).
+    QFont f = font();
+    if (lvlContinents) {
+        f.setPointSize(13);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        for (const Continent& c : kContinents) {
+            bool vis;
+            const QPointF s = projectGlobe(c.lon, c.lat, &vis);
+            if (!vis) continue;
+            const QString name = QString::fromUtf8(c.name);
+            haloText(s - QPointF(fm.horizontalAdvance(name) / 2.0, 0), name, bigLabel);
+        }
+    } else if (lvlCountries) {
+        f.setPointSize(9);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        QVector<const GeoData::Country*> cands;
+        for (const GeoData::Country& c : geo.countries()) cands.append(&c);
+        std::sort(cands.begin(), cands.end(), [](const GeoData::Country* a, const GeoData::Country* b) {
+            return a->bounds.width() * a->bounds.height() > b->bounds.width() * b->bounds.height();
+        });
+        QVector<QRectF> occ;
+        for (const GeoData::Country* c : cands) {
+            const double lon = (c->labelLon != 0.0 || c->labelLat != 0.0) ? c->labelLon : c->bounds.center().x();
+            const double lat = (c->labelLon != 0.0 || c->labelLat != 0.0) ? c->labelLat : c->bounds.center().y();
+            bool vis;
+            const QPointF s = projectGlobe(lon, lat, &vis);
+            if (!vis) continue;
+            const QPointF at = s - QPointF(fm.horizontalAdvance(c->name) / 2.0, 0);
+            const QRectF lr(at.x(), at.y() - fm.height() + 4, fm.horizontalAdvance(c->name) + 4, fm.height());
+            bool col = false;
+            for (const QRectF& o : occ) if (o.intersects(lr)) { col = true; break; }
+            if (col) continue;
+            occ.append(lr);
+            haloText(at, c->name, bigLabel);
+        }
+    } else if (lvlStates) {
+        f.setPointSize(8);
+        f.setBold(true);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        for (const GeoData::State& st : geo.states()) {
+            if (st.bounds.width() * pxPerDeg < 45.0) continue;
+            bool vis;
+            const QPointF s = projectGlobe(st.bounds.center().x(), st.bounds.center().y(), &vis);
+            if (!vis) continue;
+            haloText(s - QPointF(fm.horizontalAdvance(st.name) / 2.0, 0), st.name, labelColor);
+        }
     }
 
     if (m_pins) {
@@ -860,30 +1331,39 @@ void MapView::paintGlobe(QPainter& p)
         }
     }
 
-    if (m_hoverCountry >= 0 && m_hoverCountry < geo.countries().size()) {
-        const QString name = geo.countries().at(m_hoverCountry).name;
-        QFont tf = font();
-        tf.setPointSize(9);
-        tf.setBold(true);
-        p.setFont(tf);
-        const QFontMetrics tfm(tf);
-        const qreal tw = tfm.horizontalAdvance(name) + 14, th = tfm.height() + 6;
-        QRectF box(m_hoverPos.x() + 14, m_hoverPos.y() - th - 6, tw, th);
-        if (box.right() > width() - 2) box.moveLeft(m_hoverPos.x() - tw - 8);
-        if (box.top() < 2) box.moveTop(m_hoverPos.y() + 10);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(18, 18, 20, 215));
-        p.drawRoundedRect(box, 5, 5);
-        p.setPen(QColor(0xff, 0xff, 0xff));
-        p.drawText(box, Qt::AlignCenter, name);
+    if (m_hoverState >= 0 || m_hoverCountry >= 0) {
+        QString name;
+        if (m_hoverState >= 0 && m_hoverState < geo.states().size())
+            name = geo.states().at(m_hoverState).name;
+        else if (m_hoverCountry >= 0 && m_hoverCountry < geo.countries().size())
+            name = geo.countries().at(m_hoverCountry).name;
+        if (!name.isEmpty()) {
+            QFont tf = font();
+            tf.setPointSize(9);
+            tf.setBold(true);
+            p.setFont(tf);
+            const QFontMetrics tfm(tf);
+            const qreal tw = tfm.horizontalAdvance(name) + 14, th = tfm.height() + 6;
+            QRectF box(m_hoverPos.x() + 14, m_hoverPos.y() - th - 6, tw, th);
+            if (box.right() > width() - 2) box.moveLeft(m_hoverPos.x() - tw - 8);
+            if (box.top() < 2) box.moveTop(m_hoverPos.y() + 10);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(18, 18, 20, 215));
+            p.drawRoundedRect(box, 5, 5);
+            p.setPen(QColor(0xff, 0xff, 0xff));
+            p.drawText(box, Qt::AlignCenter, name);
+        }
     }
 }
 
 void MapView::wheelEvent(QWheelEvent* event)
 {
     if (m_globe) {
+        if (m_flyAnim) m_flyAnim->stop(); // zoom manual cancela o "voo"
         const double f = (event->angleDelta().y() > 0) ? 1.12 : 1.0 / 1.12;
-        m_globeZoom = std::clamp(m_globeZoom * f, 0.6, 6.0);
+        // Teto alto o bastante pra alcançar as cidades menores (r >= 28 no
+        // globeDetailRatio, ~zoom 11), igual ao alcance do mapa plano.
+        m_globeZoom = std::clamp(m_globeZoom * f, 0.6, 12.0);
         update();
         return;
     }
@@ -903,6 +1383,7 @@ void MapView::wheelEvent(QWheelEvent* event)
 void MapView::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::LeftButton) {
+        if (m_flyAnim) m_flyAnim->stop(); // arrastar cancela o "voo"
         m_dragging = true;
         m_lastMouse = event->pos();
         m_pressPos = event->pos();
@@ -927,16 +1408,18 @@ void MapView::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
-    // Hover no globo: país sob o cursor (via projeção inversa).
+    // Hover no globo: estado (em zoom) ou país sob o cursor, via projeção inversa.
     if (m_globe) {
         bool ok;
         const QPointF gl = invGlobe(QPointF(event->pos()), &ok);
-        const int hc = ok ? countryAt(gl) : -1;
-        const bool had = (m_hoverCountry >= 0);
+        const double r = globeDetailRatio();
+        const int hs = (ok && r >= 4.5) ? stateAt(gl) : -1;
+        const int hc = (ok && hs < 0) ? countryAt(gl) : -1;
+        const bool had = (m_hoverState >= 0 || m_hoverCountry >= 0);
+        m_hoverState = hs;
         m_hoverCountry = hc;
-        m_hoverState = -1;
         m_hoverPos = event->pos();
-        if (had || hc >= 0) update();
+        if (had || hs >= 0 || hc >= 0) update();
         return;
     }
 
@@ -977,8 +1460,11 @@ void MapView::mouseReleaseEvent(QMouseEvent* event)
                 }
                 if (best) { emit pinClicked(best->id); return; }
             }
-            const int ci = countryAt(gl);
-            if (ci >= 0) emitCountryFicha(ci);
+            // Cidade > estado > país, igual ao mapa plano.
+            pickFeatureAt(gl, event->pos(), globeDetailRatio(),
+                          [this](double lon, double lat, bool* vis) {
+                              return projectGlobe(lon, lat, vis);
+                          });
             return;
         }
 

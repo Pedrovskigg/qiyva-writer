@@ -5,7 +5,10 @@
 #include <QRectF>
 #include <QWidget>
 
+#include <functional>
+
 class MapPinsStore;
+class QVariantAnimation;
 
 // Mapa-múndi do Pensário (Fase 1): desenha países, fronteiras e cidades/capitais
 // do Natural Earth com QPainter, projeção equiretangular, adotando o tema.
@@ -57,12 +60,19 @@ private:
     QPointF screenToLonLat(const QPointF& s) const; // pixels -> graus
     void fitToWidget();                              // enquadra o mundo inteiro
     void hitTest(const QPoint& pos);                 // clique -> featureClicked
+    // Identifica a feição sob um ponto (cidade > estado > país) e emite a ficha.
+    // `proj` mapeia lon/lat -> tela e diz se o ponto está visível (pro globo).
+    void pickFeatureAt(const QPointF& lonlat, const QPoint& screenPos, double r,
+                       const std::function<QPointF(double, double, bool*)>& proj);
     void emitCountryFicha(int idx);                  // monta e emite a ficha do país
     int countryAt(const QPointF& lonlat) const;      // índice do país sob o ponto
     int stateAt(const QPointF& lonlat) const;        // índice do estado sob o ponto
 
     // Globo (projeção ortográfica).
     double globeRadius() const;
+    double globeDetailRatio() const; // equivalente ao "r" de zoom do mapa plano
+    double scaleToGlobeZoom(double scale) const; // escala do plano -> zoom do globo
+    void startGlobeFly(double lon, double lat, double zoom); // anima o giro até o alvo
     QPointF projectGlobe(double lon, double lat, bool* visible) const;
     QPointF invGlobe(const QPointF& screen, bool* ok) const;
     void paintGlobe(QPainter& p);
@@ -92,4 +102,10 @@ private:
     double m_globeLon0 = -50.0; // centro de visão (graus)
     double m_globeLat0 = 12.0;
     double m_globeZoom = 1.0;   // multiplicador do raio
+
+    // Animação de "voo" do globo até um lugar (busca/navegação).
+    QVariantAnimation* m_flyAnim = nullptr;
+    double m_flyLonFrom = 0.0, m_flyLonDelta = 0.0;
+    double m_flyLatFrom = 0.0, m_flyLatTo = 0.0;
+    double m_flyZoomFrom = 0.0, m_flyZoomTo = 0.0;
 };
