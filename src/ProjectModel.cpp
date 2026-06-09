@@ -110,6 +110,22 @@ Manuscript manuscriptFromJson(const QJsonObject& o) {
     return m;
 }
 
+QJsonObject groupToJson(const Group& g) {
+    QJsonObject o;
+    o.insert(QStringLiteral("id"), g.id);
+    o.insert(QStringLiteral("title"), g.title);
+    o.insert(QStringLiteral("color"), g.color);
+    return o;
+}
+
+Group groupFromJson(const QJsonObject& o) {
+    Group g;
+    g.id    = jsonString(o.value(QStringLiteral("id")));
+    g.title = jsonString(o.value(QStringLiteral("title")));
+    g.color = jsonString(o.value(QStringLiteral("color")));
+    return g;
+}
+
 QJsonObject folderToJson(const Folder& f) {
     QJsonObject o;
     o.insert(QStringLiteral("id"), f.id);
@@ -747,6 +763,88 @@ const DrawerItem* ProjectModel::findDrawerItem(const QString& itemId, QString* o
     return nullptr;
 }
 
+// ---- Grupos ----------------------------------------------------------------
+
+const Group* ProjectModel::findGroup(const QString& id) const {
+    for (const auto& g : m_groups)
+        if (g.id == id) return &g;
+    return nullptr;
+}
+
+void ProjectModel::setGroups(const QList<Group>& list) {
+    m_groups = list;
+    emit groupsChanged();
+}
+
+QString ProjectModel::addGroup(const QString& title, const QString& color) {
+    Group g;
+    g.id    = uid();
+    g.title = title;
+    g.color = color;
+    m_groups.append(g);
+    emit groupsChanged();
+    return g.id;
+}
+
+bool ProjectModel::updateGroup(const QString& id, const QString& title, const QString& color) {
+    for (auto& g : m_groups) {
+        if (g.id == id) {
+            g.title = title;
+            g.color = color;
+            emit groupsChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ProjectModel::removeGroup(const QString& id) {
+    int idx = -1;
+    for (int i = 0; i < m_groups.size(); ++i)
+        if (m_groups[i].id == id) { idx = i; break; }
+    if (idx < 0) return false;
+    m_groups.removeAt(idx);
+    // Limpa markerId de todos os itens/pastas que referenciavam este grupo
+    for (auto& d : m_drawers) {
+        for (auto& f : d.folders)
+            if (f.markerId == id) f.markerId.clear();
+        for (auto& it : d.items)
+            if (it.markerId == id) it.markerId.clear();
+    }
+    emit groupsChanged();
+    emit drawersChanged();
+    return true;
+}
+
+bool ProjectModel::setDrawerItemGroup(const QString& itemId, const QString& groupId) {
+    for (auto& d : m_drawers) {
+        for (auto& it : d.items) {
+            if (it.id == itemId) {
+                it.markerId = groupId;
+                emit drawersChanged();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool ProjectModel::setDrawerFolderGroup(const QString& drawerKey, const QString& folderId, const QString& groupId) {
+    for (auto& d : m_drawers) {
+        if (d.key != drawerKey) continue;
+        for (auto& f : d.folders) {
+            if (f.id == folderId) {
+                f.markerId = groupId;
+                emit drawersChanged();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// ---- CharacterBonds --------------------------------------------------------
+
 QList<CharacterBond> ProjectModel::characterBondsForDrawer(const QString& drawerKey) const {
     QList<CharacterBond> out;
     for (const auto& b : m_characterBonds) {
@@ -1126,6 +1224,11 @@ QJsonObject ProjectModel::toJson() const {
     for (const auto& b : m_characterBonds) bonds.append(characterBondToJson(b));
     data.insert(QStringLiteral("characterBonds"), bonds);
 
+    // Grupos — compat Mira 1: data.markers [{ id, title, color }]
+    QJsonArray markers;
+    for (const auto& g : m_groups) markers.append(groupToJson(g));
+    data.insert(QStringLiteral("markers"), markers);
+
     root.insert(QStringLiteral("data"), data);
 
     return root;
@@ -1156,11 +1259,16 @@ void ProjectModel::loadFromJson(const QJsonObject& root) {
     const QJsonArray bonds = data.value(QStringLiteral("characterBonds")).toArray();
     for (const auto& bv : bonds) m_characterBonds.append(characterBondFromJson(bv.toObject()));
 
+    m_groups.clear();
+    const QJsonArray markers = data.value(QStringLiteral("markers")).toArray();
+    for (const auto& mv : markers) m_groups.append(groupFromJson(mv.toObject()));
+
     QJsonObject extras = data;
     extras.remove(QStringLiteral("manuscripts"));
     extras.remove(QStringLiteral("activeManuscriptId"));
     extras.remove(QStringLiteral("activeChapterId"));
     extras.remove(QStringLiteral("characterBonds"));
+    extras.remove(QStringLiteral("markers"));
     m_dataExtras = extras;
 
     emit projectNameChanged();
@@ -1171,6 +1279,7 @@ void ProjectModel::loadFromJson(const QJsonObject& root) {
     emit activeChapterChanged();
     emit settingsChanged();
     emit uiChanged();
+    emit groupsChanged();
     emit characterBondsChanged();
     emit loaded();
 }
@@ -1180,6 +1289,7 @@ void ProjectModel::clear() {
     m_manuscripts.clear();
     m_chapters.clear();
     m_drawers.clear();
+    m_groups.clear();
     m_characterBonds.clear();
     m_activeManuscriptId.clear();
     m_activeChapterId.clear();

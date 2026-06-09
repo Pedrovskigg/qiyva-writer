@@ -194,10 +194,10 @@ LeftBar::LeftBar(ProjectModel* model, QWidget* parent)
         tr("Manuscritos"),
         Manuscripts));
     m_rootLayout->addWidget(makeFixedButton(
-        QStringLiteral("consistency.svg"),
-        QStringLiteral("C"),
-        tr("Consistência narrativa"),
-        Consistency));
+        QStringLiteral("groups.svg"),
+        QStringLiteral("G"),
+        tr("Grupos"),
+        Groups));
 
     {
         auto* sep = makeGroupSeparator(this);

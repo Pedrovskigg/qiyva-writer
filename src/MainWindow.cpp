@@ -49,6 +49,7 @@
 #include <QTextFrameFormat>
 #include <QTextImageFormat>
 #include <QTextLength>
+#include <QHash>
 #include <QUrl>
 #include <QWidget>
 
@@ -100,6 +101,7 @@
 #include "TimelinePanel.h"
 #include "RemindersPanel.h"
 #include "RemindersStore.h"
+#include "GroupsPanel.h"
 #include "MarkerHoverPopup.h"
 #include "MarkerPickPopup.h"
 #include "MarkerStore.h"
@@ -355,7 +357,6 @@ void MainWindow::setupEditor()
     connect(drawerListPanel, &DrawerListPanel::panelHeightChanged, this, &MainWindow::positionSidePanels);
     connect(drawerListPanel, &DrawerListPanel::consistencyModeChanged, this, [this](bool on) {
         if (on) {
-            leftBar->setActiveFixedAction(LeftBar::Consistency);
             // Atualiza a gaveta selecionada visualmente (já foi aberta)
             if (!drawerListPanel->currentDrawerKey().isEmpty())
                 leftBar->setActiveDrawer(drawerListPanel->currentDrawerKey());
@@ -776,8 +777,12 @@ void MainWindow::setupEditor()
 
             if (!res.autoMark.isEmpty() && elementsStore) {
                 qDebug() << "[detect] adicionando autoMark ao elementsStore";
+                // Batch por docKey para emitir changed() uma só vez (evita N×refresh)
+                QHash<QString, QStringList> byDoc;
                 for (const auto& d : res.autoMark)
-                    elementsStore->addDocElement(d.docKey, d.elementId);
+                    byDoc[d.docKey].append(d.elementId);
+                for (auto it = byDoc.cbegin(); it != byDoc.cend(); ++it)
+                    elementsStore->addManyDocElements(it.key(), it.value());
             }
             if (!res.confirm.isEmpty() && presencePopup) {
                 qDebug() << "[detect] enqueue no presencePopup";
@@ -788,6 +793,17 @@ void MainWindow::setupEditor()
                     win.x() + win.width()  - presencePopup->width()  - 20,
                     win.y() + win.height() - presencePopup->height() - 48);
             }
+        }
+    });
+
+    // Se um elemento é criado durante o scan, o snapshot fica desatualizado —
+    // cancelar para que o próximo ciclo recomece com o estado correto.
+    connect(elementsStore, &ElementsStore::changed, this, [this]() {
+        if (!m_scanState || !elementsStore) return;
+        if (m_scanState->elements.size() != elementsStore->elements().size()) {
+            qDebug() << "[detect] lista de elementos mudou durante scan — cancelando";
+            detectionBatchTimer->stop();
+            m_scanState.reset();
         }
     });
 
@@ -1470,18 +1486,31 @@ void MainWindow::setupEditor()
                 timelinePanel->activateWindow();
                 leftBar->setActiveFixedAction(LeftBar::Timeline);
             }
-        } else if (action == LeftBar::Consistency) {
-            manuscriptPanel->closePanel();
-            if (drawerListPanel->isConsistencyMode() && drawerListPanel->isPanelOpen()) {
-                // Toggle off: fecha o modo consistência desativando o botão interno
-                // (openInConsistencyMode só abre; fechar é via closePanel ou clique no btn)
-                drawerListPanel->closePanel();
+        } else if (action == LeftBar::Groups) {
+            if (!groupsPanel) {
+                groupsPanel = new GroupsPanel(projectModel, this);
+                connect(groupsPanel, &GroupsPanel::closeRequested, this, [this]() {
+                    if (groupsPanel) groupsPanel->hide();
+                    leftBar->clearSelection();
+                });
+                connect(groupsPanel, &GroupsPanel::itemActivated, this,
+                        [this](const QString& /*drawerKey*/, const QString& itemId) {
+                    EditorHost::ViewMode vm;
+                    vm.type   = EditorHost::DrawerDoc;
+                    vm.itemId = itemId;
+                    editorHost->setViewMode(vm);
+                });
+            }
+            if (groupsPanel->isVisible()) {
+                groupsPanel->hide();
                 leftBar->clearSelection();
             } else {
-                drawerListPanel->openInConsistencyMode();
-                positionSidePanels();
-                drawerListPanel->raise();
-                leftBar->setActiveFixedAction(LeftBar::Consistency);
+                const QToolButton* btn = leftBar->fixedButton(LeftBar::Groups);
+                const QRect anchor = btn
+                    ? QRect(btn->mapToGlobal(QPoint(0, 0)), btn->size())
+                    : QRect(mapToGlobal(QPoint(60, 200)), QSize(1, 1));
+                groupsPanel->showNear(anchor);
+                leftBar->setActiveFixedAction(LeftBar::Groups);
             }
         }
     });
@@ -2119,6 +2148,10 @@ void MainWindow::setupToolbar()
     connect(strikeShortcut, &QShortcut::activated, this, [this]() {
         setStrikethrough(editor && !editor->currentCharFormat().fontStrikeOut());
         syncInlineFormatButtons();
+    });
+    auto* emDashShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+-")), this);
+    connect(emDashShortcut, &QShortcut::activated, this, [this]() {
+        if (editor) editor->textCursor().insertText(QStringLiteral("—"));
     });
 }
 

@@ -618,7 +618,7 @@ void RefMenuPanel::rebuildTabs()
             label = tr("Gaveta");
         }
     } else if (m_sourceKind == SourceKind::MarkersPlaceholder) {
-        label = tr("Marcadores");
+        label = tr("Grupos");
     } else if (m_sourceKind == SourceKind::TimelinesPlaceholder) {
         label = tr("Timelines");
     } else if (m_sourceKind == SourceKind::ElementsPlaceholder) {
@@ -668,7 +668,7 @@ void RefMenuPanel::rebuildNavBody()
     } else if (m_sourceKind == SourceKind::Drawer) {
         buildDrawerView();
     } else if (m_sourceKind == SourceKind::MarkersPlaceholder) {
-        buildPlaceholderView(tr("Marcadores"), tr("Em breve. Vai listar os marcadores do projeto."));
+        buildGroupsView();
     } else if (m_sourceKind == SourceKind::TimelinesPlaceholder) {
         buildPlaceholderView(tr("Timelines"), tr("Em breve. Vai listar as linhas do tempo."));
     } else if (m_sourceKind == SourceKind::ElementsPlaceholder) {
@@ -678,6 +678,139 @@ void RefMenuPanel::rebuildNavBody()
     }
 
     m_navInnerLay->addStretch();
+}
+
+void RefMenuPanel::buildGroupsView()
+{
+    if (!m_model || !m_navInner || !m_navInnerLay) return;
+
+    // Limpa seleção de grupo se foi removido
+    if (!m_currentGroupId.isEmpty() && !m_model->findGroup(m_currentGroupId))
+        m_currentGroupId.clear();
+
+    // ---- Seção: picker de grupo ----
+    auto* grpTitle = new QLabel(tr("GRUPOS"), m_navInner);
+    grpTitle->setStyleSheet(QStringLiteral(
+        "color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:6px 6px 2px;")
+        .arg(Theme::textMuted()));
+    m_navInnerLay->addWidget(grpTitle);
+
+    const auto& groups = m_model->groups();
+
+    if (groups.isEmpty()) {
+        auto* hint = new QLabel(
+            tr("Nenhum grupo criado. Clique com o botão direito num documento de gaveta e escolha \"Adicionar ao grupo\"."),
+            m_navInner);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(QStringLiteral(
+            "color:%1; font-size:11px; padding:8px 6px; font-style:italic;").arg(Theme::textMuted()));
+        m_navInnerLay->addWidget(hint);
+        return;
+    }
+
+    auto* grpList = new QListWidget(m_navInner);
+    grpList->setObjectName(QStringLiteral("refListGrp"));
+    grpList->setSelectionMode(QAbstractItemView::SingleSelection);
+    grpList->setFrameShape(QFrame::NoFrame);
+    grpList->setUniformItemSizes(true);
+    grpList->setStyleSheet(QStringLiteral(R"(
+        QListWidget {
+            background: %1; color: %2;
+            border: 1px solid %3; border-radius: 6px;
+            outline: none; padding: 4px;
+        }
+        QListWidget::item { padding: 6px 8px; border-radius: 4px; }
+        QListWidget::item:hover    { background: %4; color: %5; }
+        QListWidget::item:selected { background: %6; color: %5; }
+    )").arg(Theme::appBackground(), Theme::textPrimary(), Theme::panelBorder(),
+            Theme::hoverOverlay(), Theme::textBright(), Theme::accentInfoSoft()));
+
+    for (const auto& g : groups) {
+        QPixmap dot(10, 10);
+        dot.fill(Qt::transparent);
+        QPainter dotP(&dot);
+        dotP.setRenderHint(QPainter::Antialiasing);
+        dotP.setBrush(QColor(g.color));
+        dotP.setPen(Qt::NoPen);
+        dotP.drawEllipse(1, 1, 8, 8);
+        dotP.end();
+
+        auto* item = new QListWidgetItem(g.title);
+        item->setIcon(QIcon(dot));
+        item->setData(Qt::UserRole, g.id);
+        grpList->addItem(item);
+        if (g.id == m_currentGroupId)
+            item->setSelected(true);
+    }
+    grpList->setFixedHeight(qMin(140, 6 + 30 * qMax(1, groups.size()) + 4));
+
+    connect(grpList, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+        if (!it) return;
+        const QString id = it->data(Qt::UserRole).toString();
+        m_currentGroupId = (m_currentGroupId == id) ? QString() : id;
+        changeSelectedKey(QString());
+        rebuildNavBody();
+        rebuildPreview();
+    });
+    m_navInnerLay->addWidget(grpList);
+
+    if (m_currentGroupId.isEmpty()) return;
+
+    // ---- Seção: itens do grupo ----
+    auto* itemsTitle = new QLabel(tr("DOCUMENTOS NO GRUPO"), m_navInner);
+    itemsTitle->setStyleSheet(QStringLiteral(
+        "color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:10px 6px 2px;")
+        .arg(Theme::textMuted()));
+    m_navInnerLay->addWidget(itemsTitle);
+
+    auto* itemList = new QListWidget(m_navInner);
+    itemList->setObjectName(QStringLiteral("refListGrpItems"));
+    itemList->setSelectionMode(QAbstractItemView::SingleSelection);
+    itemList->setFrameShape(QFrame::NoFrame);
+    itemList->setStyleSheet(QStringLiteral(R"(
+        QListWidget {
+            background: %1; color: %2;
+            border: 1px solid %3; border-radius: 6px;
+            outline: none; padding: 4px;
+        }
+        QListWidget::item { padding: 6px 8px; border-radius: 4px; }
+        QListWidget::item:hover    { background: %4; color: %5; }
+        QListWidget::item:selected { background: %6; color: %5; }
+    )").arg(Theme::appBackground(), Theme::textPrimary(), Theme::panelBorder(),
+            Theme::hoverOverlay(), Theme::textBright(), Theme::accentInfoSoft()));
+
+    int shown = 0;
+    for (const auto& drawer : m_model->drawers()) {
+        for (const auto& di : drawer.items) {
+            if (di.markerId != m_currentGroupId) continue;
+            if (!m_searchQuery.isEmpty() && !matchesSearch(di.title)) continue;
+            const QString label = di.title.isEmpty() ? tr("(sem nome)") : di.title;
+            const QString full  = QStringLiteral("%1  —  %2")
+                .arg(label, drawer.title.isEmpty() ? tr("gaveta") : drawer.title);
+            auto* it = new QListWidgetItem(full);
+            it->setData(Qt::UserRole, QStringLiteral("it:%1").arg(di.id));
+            if (QStringLiteral("it:%1").arg(di.id) == m_selectedKey)
+                it->setSelected(true);
+            itemList->addItem(it);
+            ++shown;
+        }
+    }
+
+    if (shown == 0) {
+        auto* noItems = new QLabel(tr("Nenhum documento neste grupo"), m_navInner);
+        noItems->setStyleSheet(QStringLiteral(
+            "color:%1; font-size:11px; padding:6px; font-style:italic;").arg(Theme::textMuted()));
+        m_navInnerLay->addWidget(noItems);
+    } else {
+        itemList->setFixedHeight(qMin(200, 6 + 30 * shown + 4));
+        connect(itemList, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
+            if (!it) return;
+            const QString key = it->data(Qt::UserRole).toString();
+            setSelected(key);
+            rebuildPreview();
+        });
+        m_navInnerLay->addWidget(itemList);
+    }
 }
 
 void RefMenuPanel::buildManuscriptsView()
@@ -1849,7 +1982,7 @@ void RefMenuPanel::onDrawerPickerClicked()
         }
         connect(a, &QAction::triggered, this, [this, kind]() { enterPlaceholderMode(kind); });
     };
-    addPlaceholder(QStringLiteral("star"),  tr("Marcadores"),        SourceKind::MarkersPlaceholder);
+    addPlaceholder(QStringLiteral("star"),  tr("Grupos"),             SourceKind::MarkersPlaceholder);
     addPlaceholder(QStringLiteral("cube"),  tr("Elementos usados"),  SourceKind::ElementsPlaceholder);
     addPlaceholder(QStringLiteral("heart"), tr("Memórias"),          SourceKind::MemoriesPlaceholder);
     menu.addSeparator();

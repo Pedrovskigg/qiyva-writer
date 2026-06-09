@@ -98,6 +98,7 @@ private:
     void rebuildNavBody();
     void buildManuscriptsView();
     void buildDrawerView();
+    void buildGroupsView();
     void buildSearchAllView();
     void buildPlaceholderView(const QString& title, const QString& subtitle);
     void buildMemoriesView();           // todas as memórias + filtro (aba do topo)
@@ -141,6 +142,7 @@ private:
     SourceKind m_sourceKind = SourceKind::Manuscript;
     QString m_currentManuscriptId;
     QString m_currentDrawerKey;
+    QString m_currentGroupId;
     QString m_currentFolderId;
     QString m_selectedKey;
     bool m_visualMode = true;

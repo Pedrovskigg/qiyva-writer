@@ -150,6 +150,8 @@ qt_add_executable(mira-writing
     src/RemindersStore.h
     src/RemindersPanel.cpp
     src/RemindersPanel.h
+    src/GroupsPanel.cpp
+    src/GroupsPanel.h
     src/LousaScene.cpp
     src/LousaScene.h
     src/LousaView.cpp

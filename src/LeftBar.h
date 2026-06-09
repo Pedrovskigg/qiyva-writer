@@ -21,7 +21,7 @@ public:
         Whiteboard,
         Timeline,
         Manuscripts,
-        Consistency,
+        Groups,
     };
     Q_ENUM(FixedAction)
 

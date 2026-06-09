@@ -60,6 +60,7 @@ public:
     QStringList docElementIds(const QString& docKey) const;
     bool hasDocElement(const QString& docKey, const QString& elementId) const;
     void addDocElement(const QString& docKey, const QString& elementId);
+    void addManyDocElements(const QString& docKey, const QStringList& elementIds);
     void removeDocElement(const QString& docKey, const QString& elementId);
 
 signals:

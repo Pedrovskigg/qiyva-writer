@@ -102,6 +102,7 @@ private:
     void updateBreadcrumb();
     void showItemContextMenu(const QString& itemId, const QPoint& globalPos);
     void showFolderContextMenu(const QString& folderId, const QPoint& globalPos);
+    void showNewGroupDialog(const QString& assignItemId = QString());
 
     QWidget* makeRow(const QString& label, bool isFolder, const QString& id, const QString& role);
     QWidget* makeElementCard(const QString& itemId, const QString& title, const QString& role, const QString& elementId);

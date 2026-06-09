@@ -244,6 +244,21 @@ void ElementsStore::addDocElement(const QString& docKey, const QString& elementI
     emit changed();
 }
 
+void ElementsStore::addManyDocElements(const QString& docKey, const QStringList& elementIds) {
+    bool anyAdded = false;
+    QJsonArray arr = m_docElements.value(docKey).toArray();
+    for (const QString& id : elementIds) {
+        if (!hasDocElement(docKey, id)) {
+            arr.append(id);
+            anyAdded = true;
+        }
+    }
+    if (!anyAdded) return;
+    m_docElements.insert(docKey, arr);
+    m_dirty = true;
+    emit changed();
+}
+
 void ElementsStore::removeDocElement(const QString& docKey, const QString& elementId) {
     if (!m_docElements.contains(docKey)) return;
     QJsonArray arr = m_docElements.value(docKey).toArray();

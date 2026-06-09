@@ -37,6 +37,12 @@ struct Manuscript {
     QString html;
 };
 
+struct Group {
+    QString id;
+    QString title;
+    QString color;
+};
+
 struct Folder {
     QString id;
     QString title;
@@ -122,6 +128,7 @@ public:
     void setDrawers(const QList<Drawer>& list);
     void setActiveManuscriptId(const QString& id);
     void setActiveChapterId(const QString& id);
+    void setGroups(const QList<Group>& list);
     void setSettings(const QJsonObject& s);
     void setUi(const QJsonObject& u);
     void setDataExtras(const QJsonObject& d);
@@ -166,6 +173,14 @@ public:
                                      const QString& statusDetail, const QString& location);
     const DrawerItem* findDrawerItem(const QString& itemId, QString* outDrawerKey = nullptr) const;
 
+    const QList<Group>& groups() const { return m_groups; }
+    const Group* findGroup(const QString& id) const;
+    QString addGroup(const QString& title, const QString& color);
+    bool updateGroup(const QString& id, const QString& title, const QString& color);
+    bool removeGroup(const QString& id);
+    bool setDrawerItemGroup(const QString& itemId, const QString& groupId);
+    bool setDrawerFolderGroup(const QString& drawerKey, const QString& folderId, const QString& groupId);
+
     const QList<CharacterBond>& characterBonds() const { return m_characterBonds; }
     QList<CharacterBond> characterBondsForDrawer(const QString& drawerKey) const;
     QString addCharacterBond(const QString& drawerKey, const QString& fromItemId,
@@ -208,6 +223,7 @@ signals:
     void manuscriptsChanged();
     void chaptersChanged();
     void drawersChanged();
+    void groupsChanged();
     void characterBondsChanged();
     void activeManuscriptChanged();
     void activeChapterChanged();
@@ -226,5 +242,6 @@ private:
     QJsonObject m_settings;
     QJsonObject m_ui;
     QJsonObject m_dataExtras;
+    QList<Group> m_groups;
     QList<CharacterBond> m_characterBonds;
 };

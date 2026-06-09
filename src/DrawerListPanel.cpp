@@ -7,6 +7,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QByteArray>
 #include <QColor>
 #include <QDrag>
@@ -1474,27 +1475,40 @@ QWidget* DrawerListPanel::makeElementCard(const QString& itemId, const QString& 
         && !elementId.isEmpty()
         && m_elementsStore->hasDocElement(m_currentDocKey, elementId);
 
+    // Cor de grupo (markerId → group color)
+    QString groupColor;
+    if (const DrawerItem* itemForGroup = m_model->findDrawerItem(itemId)) {
+        if (!itemForGroup->markerId.isEmpty()) {
+            if (const Group* g = m_model->findGroup(itemForGroup->markerId))
+                groupColor = g->color;
+        }
+    }
+
     auto* card = new QFrame(this);
     card->setObjectName(QStringLiteral("elemCard"));
     card->setAttribute(Qt::WA_StyledBackground, true);
     card->setCursor(Qt::PointingHandCursor);
     card->setContextMenuPolicy(Qt::CustomContextMenu);
     card->setFixedSize(csz.cardW, showConsistency ? csz.cardHConsistency : csz.cardH);
-    card->setStyleSheet(QStringLiteral(R"(
-        QFrame#elemCard {
-            background: %1;
-            border: %5 solid %2;
-            border-radius: 8px;
-        }
-        QFrame#elemCard:hover {
-            background: %3;
-            border-color: %4;
-        }
-    )").arg(Theme::pressedOverlay(),
-            presentInDoc ? Theme::accentDefault() : Theme::subtleBorder(),
-            Theme::hoverOverlay(),
-            presentInDoc ? Theme::accentDefault() : Theme::borderStrong(),
-            presentInDoc ? QStringLiteral("2px") : QStringLiteral("1px")));
+    {
+        const QString normalBorder  = !groupColor.isEmpty() ? groupColor
+                                    : (presentInDoc ? Theme::accentDefault() : Theme::subtleBorder());
+        const QString hoverBorder   = !groupColor.isEmpty() ? groupColor
+                                    : (presentInDoc ? Theme::accentDefault() : Theme::borderStrong());
+        const QString borderWidth   = (!groupColor.isEmpty() || presentInDoc) ? QStringLiteral("2px") : QStringLiteral("1px");
+        card->setStyleSheet(QStringLiteral(R"(
+            QFrame#elemCard {
+                background: %1;
+                border: %5 solid %2;
+                border-radius: 8px;
+            }
+            QFrame#elemCard:hover {
+                background: %3;
+                border-color: %4;
+            }
+        )").arg(Theme::pressedOverlay(), normalBorder,
+                Theme::hoverOverlay(), hoverBorder, borderWidth));
+    }
 
     auto* lay = new QVBoxLayout(card);
     lay->setContentsMargins(8, 8, 8, 8);
@@ -1703,7 +1717,33 @@ QWidget* DrawerListPanel::makeElementCard(const QString& itemId, const QString& 
 }
 
 QWidget* DrawerListPanel::makeRow(const QString& label, bool isFolder, const QString& id, const QString& role) {
-    auto* btn = new QToolButton(this);
+    // Cor de grupo para indicador visual (só itens, não pastas)
+    QString groupColor;
+    if (!isFolder && m_model) {
+        if (const DrawerItem* it = m_model->findDrawerItem(id)) {
+            if (!it->markerId.isEmpty()) {
+                if (const Group* g = m_model->findGroup(it->markerId))
+                    groupColor = g->color;
+            }
+        }
+    }
+
+    // Wrapper para poder adicionar o indicador de grupo à esquerda
+    auto* wrap = new QWidget(this);
+    wrap->setContextMenuPolicy(Qt::CustomContextMenu);
+    auto* wrapLay = new QHBoxLayout(wrap);
+    wrapLay->setContentsMargins(0, 0, 0, 0);
+    wrapLay->setSpacing(0);
+
+    if (!groupColor.isEmpty()) {
+        auto* dot = new QFrame(wrap);
+        dot->setFixedSize(4, 22);
+        dot->setStyleSheet(QStringLiteral(
+            "background: %1; border-radius: 2px; margin: 4px 4px 4px 0;").arg(groupColor));
+        wrapLay->addWidget(dot, 0, Qt::AlignVCenter);
+    }
+
+    auto* btn = new QToolButton(wrap);
     // Folder usa ícone "▸", item usa marcador discreto. Role aparece à direita em cinza.
     const QString glyph = isFolder ? QStringLiteral("▸") : QStringLiteral("·");
     QString text = QStringLiteral("%1  %2").arg(glyph, label);
@@ -1733,6 +1773,7 @@ QWidget* DrawerListPanel::makeRow(const QString& label, bool isFolder, const QSt
         }
     )").arg(Theme::textPrimary(), Theme::hoverOverlay(), Theme::textBright(), Theme::subtleBorder()));
     btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    wrapLay->addWidget(btn);
 
     const QString drawerKey = m_currentKey;
     connect(btn, &QToolButton::clicked, this, [this, isFolder, id, drawerKey]() {
@@ -1743,7 +1784,11 @@ QWidget* DrawerListPanel::makeRow(const QString& label, bool isFolder, const QSt
         if (isFolder) showFolderContextMenu(id, btn->mapToGlobal(pos));
         else showItemContextMenu(id, btn->mapToGlobal(pos));
     });
-    return btn;
+    connect(wrap, &QWidget::customContextMenuRequested, this, [this, wrap, isFolder, id](const QPoint& pos) {
+        if (isFolder) showFolderContextMenu(id, wrap->mapToGlobal(pos));
+        else showItemContextMenu(id, wrap->mapToGlobal(pos));
+    });
+    return wrap;
 }
 
 bool DrawerListPanel::eventFilter(QObject* watched, QEvent* event)
@@ -2010,6 +2055,118 @@ QStringList DrawerListPanel::ancestorFolderIds(const QString& folderId) const {
     return chain;
 }
 
+void DrawerListPanel::showNewGroupDialog(const QString& assignItemId) {
+    if (!m_model) return;
+
+    static const QStringList kDefaultColors = {
+        QStringLiteral("#E57373"), QStringLiteral("#FFB74D"), QStringLiteral("#FFF176"),
+        QStringLiteral("#81C784"), QStringLiteral("#4FC3F7"), QStringLiteral("#CE93D8"),
+        QStringLiteral("#F06292"), QStringLiteral("#80CBC4"), QStringLiteral("#A1887F"),
+    };
+
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(tr("Novo grupo"));
+    dlg->setModal(true);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setFixedWidth(300);
+
+    dlg->setStyleSheet(QStringLiteral(R"(
+        QDialog {
+            background: %1;
+            color: %2;
+        }
+        QLineEdit {
+            background: %3;
+            color: %2;
+            border: 1px solid %4;
+            border-radius: 6px;
+            padding: 6px 10px;
+        }
+        QPushButton#okBtn {
+            background: %5;
+            color: %6;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 14px;
+            font-weight: 600;
+        }
+        QPushButton#okBtn:hover { background: %7; }
+        QPushButton#cancelBtn {
+            background: transparent;
+            color: %8;
+            border: 1px solid %4;
+            border-radius: 6px;
+            padding: 6px 14px;
+        }
+        QPushButton#cancelBtn:hover { background: %9; }
+    )").arg(Theme::panelBackground(), Theme::textPrimary(),
+            Theme::inputBackground(), Theme::panelBorder(),
+            Theme::accentDefault(), Theme::textBright(),
+            Theme::borderStrong(), Theme::textMuted(),
+            Theme::hoverOverlay()));
+
+    auto* lay = new QVBoxLayout(dlg);
+    lay->setContentsMargins(16, 16, 16, 16);
+    lay->setSpacing(12);
+
+    auto* nameEdit = new QLineEdit(dlg);
+    nameEdit->setPlaceholderText(tr("Nome do grupo"));
+    lay->addWidget(nameEdit);
+
+    // Seletor de cor: chips pré-definidos
+    QString chosenColor = kDefaultColors.first();
+    auto* colorRow = new QHBoxLayout();
+    colorRow->setSpacing(6);
+    QList<QPushButton*> colorBtns;
+    for (const QString& col : kDefaultColors) {
+        auto* cb = new QPushButton(dlg);
+        cb->setFixedSize(24, 24);
+        cb->setCheckable(true);
+        if (col == chosenColor) cb->setChecked(true);
+        cb->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; border-radius: 12px; border: 2px solid transparent; }"
+            "QPushButton:checked { border-color: %2; }"
+            "QPushButton:hover   { border-color: %3; }")
+            .arg(col, Theme::textBright(), Theme::textMuted()));
+        colorRow->addWidget(cb);
+        colorBtns.append(cb);
+    }
+    colorRow->addStretch();
+    lay->addLayout(colorRow);
+
+    for (auto* cb : colorBtns) {
+        const QString col = cb->styleSheet().section(QStringLiteral("background: "), 1, 1).section(QStringLiteral(";"), 0, 0).trimmed();
+        connect(cb, &QPushButton::clicked, dlg, [cb, &chosenColor, col, &colorBtns](bool) {
+            chosenColor = col;
+            for (auto* b : colorBtns) b->setChecked(b == cb);
+        });
+    }
+
+    auto* btnRow = new QHBoxLayout();
+    btnRow->setSpacing(8);
+    auto* cancelBtn = new QPushButton(tr("Cancelar"), dlg);
+    cancelBtn->setObjectName(QStringLiteral("cancelBtn"));
+    auto* okBtn = new QPushButton(tr("Criar"), dlg);
+    okBtn->setObjectName(QStringLiteral("okBtn"));
+    okBtn->setDefault(true);
+    btnRow->addStretch();
+    btnRow->addWidget(cancelBtn);
+    btnRow->addWidget(okBtn);
+    lay->addLayout(btnRow);
+
+    connect(cancelBtn, &QPushButton::clicked, dlg, &QDialog::reject);
+    connect(okBtn, &QPushButton::clicked, dlg, [dlg, nameEdit, &chosenColor, this, assignItemId]() {
+        const QString name = nameEdit->text().trimmed();
+        if (name.isEmpty()) { nameEdit->setFocus(); return; }
+        const QString id = m_model->addGroup(name, chosenColor);
+        if (!assignItemId.isEmpty())
+            m_model->setDrawerItemGroup(assignItemId, id);
+        dlg->accept();
+    });
+
+    dlg->exec();
+}
+
 void DrawerListPanel::showItemContextMenu(const QString& itemId, const QPoint& globalPos) {
     if (!m_model) return;
     const Drawer* drawer = m_model->findDrawer(m_currentKey);
@@ -2053,9 +2210,44 @@ void DrawerListPanel::showItemContextMenu(const QString& itemId, const QPoint& g
         });
     }
 
-    auto* markerAct = menu.addAction(tr("Adicionar marcador"));
-    markerAct->setEnabled(false);
-    markerAct->setToolTip(tr("Em breve"));
+    // ---- Grupos ----
+    QMenu* groupMenu = menu.addMenu(tr("Adicionar ao grupo"));
+    {
+        const QString curGroupId = item->markerId;
+        bool hasGroups = false;
+        for (const auto& g : m_model->groups()) {
+            hasGroups = true;
+            auto* ga = groupMenu->addAction(g.title);
+            ga->setCheckable(true);
+            ga->setChecked(g.id == curGroupId);
+            // dot colorido via ícone 8x8
+            QPixmap dot(10, 10);
+            dot.fill(Qt::transparent);
+            QPainter p(&dot);
+            p.setRenderHint(QPainter::Antialiasing);
+            p.setBrush(QColor(g.color));
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(1, 1, 8, 8);
+            p.end();
+            ga->setIcon(QIcon(dot));
+            const QString gid = g.id;
+            const bool alreadyIn = (gid == curGroupId);
+            connect(ga, &QAction::triggered, this, [this, itemId, gid, alreadyIn]() {
+                m_model->setDrawerItemGroup(itemId, alreadyIn ? QString() : gid);
+            });
+        }
+        if (hasGroups) groupMenu->addSeparator();
+        auto* newGroupAct = groupMenu->addAction(tr("Novo grupo..."));
+        connect(newGroupAct, &QAction::triggered, this, [this, itemId]() {
+            showNewGroupDialog(itemId);
+        });
+        if (!curGroupId.isEmpty()) {
+            auto* removeGroupAct = groupMenu->addAction(tr("Remover do grupo"));
+            connect(removeGroupAct, &QAction::triggered, this, [this, itemId]() {
+                m_model->setDrawerItemGroup(itemId, QString());
+            });
+        }
+    }
 
     auto* refMenuAct = menu.addAction(tr("Abrir no Menu de Referência"));
     connect(refMenuAct, &QAction::triggered, this, [this, drawerKey, itemId]() {
