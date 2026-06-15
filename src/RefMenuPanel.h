@@ -2,6 +2,8 @@
 
 #include "MemoriesStore.h"
 
+#include <QList>
+#include <QPixmap>
 #include <QPoint>
 #include <QSize>
 #include <QString>
@@ -44,6 +46,8 @@ public:
     void openPanel();
     void closePanel();
     void openForDrawer(const QString& drawerKey, const QString& itemId = QString());
+    void openForChapter(const QString& manuscriptId, const QString& chapterId);
+    void openForScene(const QString& manuscriptId, const QString& chapterId, int sceneIndex);
 
     // Busca dentro do RefMenu (Ctrl+Alt+F). Abre o painel se fechado e foca o
     // campo de busca. Filtra a navegação por nome em todas as fontes
@@ -77,6 +81,7 @@ protected:
 
 private slots:
     void onDrawerPickerClicked();
+    void onManuscriptPickerClicked();
     void onToggleNav();
     void onTogglePin();
     void onCycleFontSize();
@@ -84,6 +89,7 @@ private slots:
     void onCloseClicked();
     void onToggleSearch();
     void onSearchQueryChanged(const QString& q);
+    void onToggleEdit(bool on);
     void applyTheme();
 
 private:
@@ -109,6 +115,7 @@ private:
     void openMemoryInRef(const MemoriesStore::Memory& mem);   // abre no preview + marca
     void highlightInPreview(const QString& query);            // "Ctrl+F" no preview
     void rebuildPreview();
+    void rescalePreviewImages(); // reaplica os pixmaps às novas dimensões do host (resize do painel)
     void applyNavVisibility();
     void enterManuscriptMode(const QString& manuscriptId = QString());
     void enterDrawerMode(const QString& drawerKey);
@@ -120,6 +127,12 @@ private:
     void setupCharacterDrawerVisualDefault();
 
     QString resolveDocHtml(const QString& key) const;
+    // Chave de cache (DocCache) editável para m_selectedKey, ou vazio se a
+    // seleção atual não pode ser editada no RefMenu (cena individual,
+    // placeholders, doc aberto no editor principal etc.).
+    QString editableCacheKey() const;
+    void updateEditAvailability();
+    void commitEdit(); // salva m_preview->toHtml() na DocCache se m_editing
     void changeSelectedKey(const QString& key); // atribui + emite selectedKeyChanged
     void extractImagesFromHtml(const QString& html, QStringList* imagesOut, QString* restOut) const;
     QString resolveImageSrc(const QString& src) const;
@@ -147,6 +160,8 @@ private:
     QString m_selectedKey;
     bool m_visualMode = true;
     bool m_pinned = false;
+    bool m_editing = false;
+    QString m_editingKey; // chave DocCache do doc em edição (vazio = nenhum)
     bool m_navHidden = false;
     int m_previewFontPt = 13;
 
@@ -193,7 +208,9 @@ private:
     QLabel* m_previewRole = nullptr;
     QScrollArea* m_previewImagesScroll = nullptr;
     QWidget* m_previewImagesHost = nullptr;
-    QHBoxLayout* m_previewImagesLay = nullptr;
+    QVBoxLayout* m_previewImagesLay = nullptr;
+    QList<QPixmap> m_previewImagePixmaps;
+    QList<QLabel*> m_previewImageLabels;
     QTextBrowser* m_preview = nullptr;
     QLabel* m_previewPlaceholder = nullptr;
 

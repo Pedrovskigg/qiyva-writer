@@ -413,8 +413,8 @@ void ManuscriptPanel::rebuildList() {
         connect(btn, &QToolButton::clicked, this, [this, manuscriptId, chapterId]() {
             emit chapterActivated(manuscriptId, chapterId);
         });
-        connect(btn, &QToolButton::customContextMenuRequested, this, [this, btn, chapterId](const QPoint& pos) {
-            showChapterContextMenu(chapterId, btn->mapToGlobal(pos));
+        connect(btn, &QToolButton::customContextMenuRequested, this, [this, btn, manuscriptId, chapterId](const QPoint& pos) {
+            showChapterContextMenu(manuscriptId, chapterId, btn->mapToGlobal(pos));
         });
         btn->setProperty("kind", QStringLiteral("chapter"));
         btn->setProperty("chapterId", chapterId);
@@ -441,8 +441,8 @@ void ManuscriptPanel::rebuildList() {
                 connect(sbtn, &QToolButton::clicked, this, [this, manuscriptId, chapterId, sceneIdx]() {
                     emit sceneActivated(manuscriptId, chapterId, sceneIdx);
                 });
-                connect(sbtn, &QToolButton::customContextMenuRequested, this, [this, sbtn, chapterId, sceneIdx](const QPoint& pos) {
-                    showSceneContextMenu(chapterId, sceneIdx, sbtn->mapToGlobal(pos));
+                connect(sbtn, &QToolButton::customContextMenuRequested, this, [this, sbtn, manuscriptId, chapterId, sceneIdx](const QPoint& pos) {
+                    showSceneContextMenu(manuscriptId, chapterId, sceneIdx, sbtn->mapToGlobal(pos));
                 });
                 sbtn->setProperty("kind", QStringLiteral("scene"));
                 sbtn->setProperty("chapterId", chapterId);
@@ -471,7 +471,7 @@ static QString contextMenuQss() {
            Theme::hoverOverlay(), Theme::textBright(), Theme::textMuted());
 }
 
-void ManuscriptPanel::showChapterContextMenu(const QString& chapterId, const QPoint& globalPos) {
+void ManuscriptPanel::showChapterContextMenu(const QString& manuscriptId, const QString& chapterId, const QPoint& globalPos) {
     QMenu menu(this);
     menu.setStyleSheet(contextMenuQss());
 
@@ -488,6 +488,11 @@ void ManuscriptPanel::showChapterContextMenu(const QString& chapterId, const QPo
     elemsAct->setEnabled(false);
     elemsAct->setToolTip(tr("Em breve"));
 
+    auto* refAct = menu.addAction(tr("Abrir no Menu de Referência"));
+    connect(refAct, &QAction::triggered, this, [this, manuscriptId, chapterId]() {
+        emit openChapterInRefMenuRequested(manuscriptId, chapterId);
+    });
+
     menu.addSeparator();
 
     auto* deleteAct = menu.addAction(tr("Excluir capítulo"));
@@ -498,7 +503,7 @@ void ManuscriptPanel::showChapterContextMenu(const QString& chapterId, const QPo
     menu.exec(globalPos);
 }
 
-void ManuscriptPanel::showSceneContextMenu(const QString& chapterId, int sceneIndex, const QPoint& globalPos) {
+void ManuscriptPanel::showSceneContextMenu(const QString& manuscriptId, const QString& chapterId, int sceneIndex, const QPoint& globalPos) {
     QMenu menu(this);
     menu.setStyleSheet(contextMenuQss());
 
@@ -514,6 +519,11 @@ void ManuscriptPanel::showSceneContextMenu(const QString& chapterId, int sceneIn
     auto* varAct = menu.addAction(tr("Criar variação"));
     connect(varAct, &QAction::triggered, this, [this, chapterId, sceneIndex]() {
         emit createVariationRequested(chapterId, sceneIndex);
+    });
+
+    auto* refAct = menu.addAction(tr("Abrir no Menu de Referência"));
+    connect(refAct, &QAction::triggered, this, [this, manuscriptId, chapterId, sceneIndex]() {
+        emit openSceneInRefMenuRequested(manuscriptId, chapterId, sceneIndex);
     });
 
     menu.addSeparator();

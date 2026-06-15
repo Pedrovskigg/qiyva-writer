@@ -36,6 +36,7 @@ public:
     void openPanel();
     void closePanel();
     bool isPanelOpen() const;
+    void openMap();
 
     // Altura da TopToolbar flutuante — o painel ancora logo abaixo dela.
     void setTopInset(int px) { m_topInset = px; }

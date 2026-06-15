@@ -1409,6 +1409,45 @@ void MainWindow::setupEditor()
         if (refMenuPanel) refMenuPanel->openPreviewFind();
     });
 
+    // Atalhos dos painéis principais (F2-F7, F12).
+    auto* whiteboardShortcut = new QShortcut(QKeySequence(Qt::Key_F2), this);
+    connect(whiteboardShortcut, &QShortcut::activated, this, [this]() {
+        if (leftBar) leftBar->fixedActionTriggered(LeftBar::Whiteboard);
+    });
+    auto* timelineShortcut = new QShortcut(QKeySequence(Qt::Key_F3), this);
+    connect(timelineShortcut, &QShortcut::activated, this, [this]() {
+        if (leftBar) leftBar->fixedActionTriggered(LeftBar::Timeline);
+    });
+    auto* pensarioShortcut = new QShortcut(QKeySequence(Qt::Key_F4), this);
+    connect(pensarioShortcut, &QShortcut::activated, this, [this]() {
+        if (pensarioPanel) pensarioPanel->togglePanel();
+    });
+    auto* mapShortcut = new QShortcut(QKeySequence(QStringLiteral("Shift+F4")), this);
+    connect(mapShortcut, &QShortcut::activated, this, [this]() {
+        if (pensarioPanel) pensarioPanel->openMap();
+    });
+    auto* groupsShortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
+    connect(groupsShortcut, &QShortcut::activated, this, [this]() {
+        if (leftBar) leftBar->fixedActionTriggered(LeftBar::Groups);
+    });
+    auto* refMenuShortcut = new QShortcut(QKeySequence(Qt::Key_F6), this);
+    connect(refMenuShortcut, &QShortcut::activated, this, [this]() {
+        if (refMenuPanel) refMenuPanel->togglePanel();
+    });
+    auto* remindersShortcut = new QShortcut(QKeySequence(Qt::Key_F7), this);
+    connect(remindersShortcut, &QShortcut::activated, this, [this]() {
+        if (!remindersPanel || !toolbar) return;
+        if (remindersPanel->isVisible()) {
+            remindersPanel->hide();
+            return;
+        }
+        remindersPanel->showNear(toolbar->reminderButtonGlobalRect());
+    });
+    auto* homeShortcut = new QShortcut(QKeySequence(Qt::Key_F12), this);
+    connect(homeShortcut, &QShortcut::activated, this, [this]() {
+        openMainMenu();
+    });
+
     connect(leftBar, &LeftBar::drawerSelected, this, [this](const QString& key) {
         manuscriptPanel->closePanel();
         if (drawerListPanel->isPanelOpen() && drawerListPanel->currentDrawerKey() == key) {
@@ -1623,6 +1662,16 @@ void MainWindow::setupEditor()
 
     connect(manuscriptPanel, &ManuscriptPanel::createVariationRequested, this, [this](const QString& chapterId, int sceneIndex) {
         projectModel->createSceneVariation(chapterId, sceneIndex, QString());
+    });
+
+    connect(manuscriptPanel, &ManuscriptPanel::openChapterInRefMenuRequested, this,
+            [this](const QString& manuscriptId, const QString& chapterId) {
+        if (refMenuPanel) refMenuPanel->openForChapter(manuscriptId, chapterId);
+    });
+
+    connect(manuscriptPanel, &ManuscriptPanel::openSceneInRefMenuRequested, this,
+            [this](const QString& manuscriptId, const QString& chapterId, int sceneIndex) {
+        if (refMenuPanel) refMenuPanel->openForScene(manuscriptId, chapterId, sceneIndex);
     });
 
     auto reloadActiveEditorIfMatches = [this](const QString& chapterId) {

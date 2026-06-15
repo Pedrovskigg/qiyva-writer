@@ -384,6 +384,11 @@ void PensarioPanel::openNoteCreate()
     m_notePopup->openForCreate();
 }
 
+void PensarioPanel::openMap()
+{
+    openMapPanel();
+}
+
 void PensarioPanel::openMapPanel()
 {
     if (!m_mapPanel) {

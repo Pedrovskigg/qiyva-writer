@@ -253,12 +253,13 @@ TopToolbar::TopToolbar(QWidget *parent)
     indentButton->setToolTip(tr("Identação de parágrafo"));
     connect(indentButton, &QToolButton::toggled, this, &TopToolbar::firstLineIndentToggled);
 
-    // ---------------- Grupo E: Mídia ----------------
-    imageButton->setObjectName(QStringLiteral("ttbMedia"));
+    // ---------------- Grupo B (continuação): Imagem ----------------
+    imageButton->setObjectName(QStringLiteral("ttbInline"));
     bindIcon(imageButton, QStringLiteral("add-image.svg"));
     imageButton->setToolTip(tr("Adicionar imagem"));
     connect(imageButton, &QToolButton::clicked, this, &TopToolbar::addImageRequested);
 
+    // ---------------- Grupo E: Mídia ----------------
     reminderButton->setObjectName(QStringLiteral("ttbMedia"));
     bindIcon(reminderButton, QStringLiteral("reminder.svg"));
     reminderButton->setToolTip(tr("Lembretes"));
@@ -330,6 +331,7 @@ TopToolbar::TopToolbar(QWidget *parent)
     layout->addWidget(italicButton);
     layout->addWidget(underlineButton);
     layout->addWidget(strikethroughButton);
+    layout->addWidget(imageButton);
 
     // --- Centro: stretch reservado (título é posicionado manualmente) ---
     layout->addStretch(1);
@@ -342,7 +344,6 @@ TopToolbar::TopToolbar(QWidget *parent)
     layout->addWidget(makeVSeparator(this));
 
     // --- Direita: Mídia ---
-    layout->addWidget(imageButton);
     layout->addWidget(reminderButton);
     layout->addWidget(immersiveSoundButton);
     layout->addWidget(makeVSeparator(this));

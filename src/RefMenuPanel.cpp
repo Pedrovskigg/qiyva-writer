@@ -31,6 +31,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QScrollArea>
 #include <QSettings>
 #include <QShowEvent>
@@ -42,6 +43,7 @@
 #include <QTextDocument>
 #include <QTextFragment>
 #include <QTimer>
+#include <QUrl>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -77,13 +79,14 @@ const char* kKeyFontPt      = "ui/refMenuPanel/previewFontPt";
 
 RefMenuPanel::RefMenuPanel(ProjectModel* model, EditorHost* host, DocCache* cache,
                            ElementsStore* elements, QWidget* parent)
-    : QWidget(parent)
+    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint)
     , m_model(model)
     , m_host(host)
     , m_cache(cache)
     , m_elements(elements)
 {
     setObjectName(QStringLiteral("refMenuPanel"));
+    setWindowTitle(tr("Referência"));
     setAttribute(Qt::WA_StyledBackground, true);
     setMinimumSize(kMinW, kMinH);
     resize(kDefaultW, kDefaultH);
@@ -206,9 +209,17 @@ void RefMenuPanel::buildUi()
 
     m_editBtn = new QToolButton(m_header);
     m_editBtn->setObjectName(QStringLiteral("refTinyBtn"));
-    m_editBtn->setText(QStringLiteral("/"));
-    m_editBtn->setToolTip(tr("Editar (em breve)"));
+    {
+        QIcon ic = IconUtils::loadToolbarIcon(QStringLiteral(":/icons/edit.svg"),
+            QColor(Theme::textMuted()), QColor(Theme::textBright()), QColor(Theme::textBright()),
+            QSize(14, 14));
+        if (!ic.isNull()) m_editBtn->setIcon(ic);
+    }
+    m_editBtn->setCheckable(true);
+    m_editBtn->setCursor(Qt::PointingHandCursor);
+    m_editBtn->setToolTip(tr("Editar documento"));
     m_editBtn->setEnabled(false);
+    connect(m_editBtn, &QToolButton::toggled, this, &RefMenuPanel::onToggleEdit);
     hLay->addWidget(m_editBtn);
 
     m_pinBtn = new QToolButton(m_header);
@@ -273,7 +284,7 @@ void RefMenuPanel::buildUi()
     m_msTabBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_msTabBtn->setCheckable(true);
     m_msTabBtn->setCursor(Qt::PointingHandCursor);
-    connect(m_msTabBtn, &QToolButton::clicked, this, [this]() { enterManuscriptMode(); });
+    connect(m_msTabBtn, &QToolButton::clicked, this, &RefMenuPanel::onManuscriptPickerClicked);
     tabsLay->addWidget(m_msTabBtn);
 
     // Aba de Memórias do projeto (ocupa o lugar da antiga aba "Timeline").
@@ -354,14 +365,14 @@ void RefMenuPanel::buildUi()
     m_previewImagesScroll->setObjectName(QStringLiteral("refImagesScroll"));
     m_previewImagesScroll->setWidgetResizable(true);
     m_previewImagesScroll->setFrameShape(QFrame::NoFrame);
-    m_previewImagesScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_previewImagesScroll->setFixedHeight(120);
+    m_previewImagesScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_previewImagesScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_previewImagesScroll->setMaximumHeight(360);
     m_previewImagesScroll->setVisible(false);
     m_previewImagesHost = new QWidget(m_previewImagesScroll);
-    m_previewImagesLay = new QHBoxLayout(m_previewImagesHost);
+    m_previewImagesLay = new QVBoxLayout(m_previewImagesHost);
     m_previewImagesLay->setContentsMargins(0, 0, 0, 0);
-    m_previewImagesLay->setSpacing(6);
-    m_previewImagesLay->addStretch();
+    m_previewImagesLay->setSpacing(8);
     m_previewImagesScroll->setWidget(m_previewImagesHost);
     pvLay->addWidget(m_previewImagesScroll);
 
@@ -590,6 +601,13 @@ void RefMenuPanel::rebuildTabs()
     if (m_msTabBtn) {
         QSignalBlocker block(m_msTabBtn);
         m_msTabBtn->setChecked(inMs);
+
+        QString msTitle;
+        for (const auto& m : m_model->manuscripts()) {
+            if (m.id == m_currentManuscriptId) { msTitle = m.title; break; }
+        }
+        if (msTitle.isEmpty()) msTitle = tr("Manuscritos");
+        m_msTabBtn->setText(QString::fromUtf8("%1 ▾").arg(msTitle));
     }
     if (m_timelineTabBtn) {
         QSignalBlocker block(m_timelineTabBtn);
@@ -817,70 +835,9 @@ void RefMenuPanel::buildManuscriptsView()
 {
     if (!m_model || !m_navInner || !m_navInnerLay) return;
 
-    // ---- Seção Manuscritos ----
-    auto* msTitle = new QLabel(tr("MANUSCRITOS"), m_navInner);
-    msTitle->setStyleSheet(QStringLiteral("color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:6px 6px 2px;")
-                               .arg(Theme::textMuted()));
-    m_navInnerLay->addWidget(msTitle);
-
-    auto* msList = new QListWidget(m_navInner);
-    msList->setObjectName(QStringLiteral("refListMs"));
-    msList->setSelectionMode(QAbstractItemView::SingleSelection);
-    msList->setFrameShape(QFrame::NoFrame);
-    msList->setUniformItemSizes(true);
-    msList->setIconSize(QSize(14, 14));
-    msList->setStyleSheet(QStringLiteral(R"(
-        QListWidget {
-            background: %1; color: %2;
-            border: 1px solid %3; border-radius: 6px;
-            outline: none; padding: 4px;
-        }
-        QListWidget::item { padding: 6px 8px; border-radius: 4px; }
-        QListWidget::item:hover { background: %4; color: %5; }
-        QListWidget::item:selected { background: %6; color: %5; }
-    )").arg(Theme::appBackground(),
-           Theme::textPrimary(),
-           Theme::panelBorder(),
-           Theme::hoverOverlay(),
-           Theme::textBright(),
-           Theme::accentInfoSoft()));
-    QIcon icMs = IconUtils::loadToolbarIcon(QStringLiteral(":/icons/elements/manuscript.svg"),
-        QColor(Theme::textMuted()), QColor(Theme::textBright()), QColor(Theme::textBright()),
-        QSize(14, 14));
-    int msShown = 0;
-    for (const auto& m : m_model->manuscripts()) {
-        const QString title = m.title.isEmpty() ? tr("Manuscrito") : m.title;
-        // Manuscritos sempre aparecem (são poucos e servem de contexto pra
-        // filtragem dos capítulos), exceto se busca ativa e nada bate.
-        if (!m_searchQuery.isEmpty() && !matchesSearch(title)) continue;
-        auto* it = new QListWidgetItem(title);
-        if (!icMs.isNull()) it->setIcon(icMs);
-        it->setData(Qt::UserRole, QStringLiteral("ms:%1").arg(m.id));
-        msList->addItem(it);
-        if (m.id == m_currentManuscriptId) {
-            it->setSelected(true);
-        }
-        ++msShown;
-    }
-    msList->setFixedHeight(qMin(120, 6 + 30 * qMax(1, msShown) + 4));
-    connect(msList, &QListWidget::itemClicked, this, [this](QListWidgetItem* it) {
-        if (!it) return;
-        const QString key = it->data(Qt::UserRole).toString();
-        if (key.startsWith(QStringLiteral("ms:"))) {
-            const QString id = key.mid(3);
-            if (id != m_currentManuscriptId) {
-                m_currentManuscriptId = id;
-                changeSelectedKey(QString());
-                rebuildNavBody();
-                rebuildPreview();
-            }
-        }
-    });
-    m_navInnerLay->addWidget(msList);
-
-    // ---- Seção Capítulos ----
+    // ---- Seção Capítulos (do manuscrito escolhido via picker) ----
     auto* chTitle = new QLabel(tr("CAPÍTULOS"), m_navInner);
-    chTitle->setStyleSheet(QStringLiteral("color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:10px 6px 2px;")
+    chTitle->setStyleSheet(QStringLiteral("color:%1; font-size:10px; font-weight:700; letter-spacing:1px; padding:6px 6px 2px;")
                                .arg(Theme::textMuted()));
     m_navInnerLay->addWidget(chTitle);
 
@@ -1704,12 +1661,18 @@ void RefMenuPanel::rebuildPreview()
 {
     if (!m_preview || !m_previewTitle || !m_previewRole) return;
 
+    // Antes de trocar o conteúdo do preview, salva/encerra edição em
+    // andamento (se houver) — senão o texto editado se perde no setHtml.
+    updateEditAvailability();
+
     // limpa imagens anteriores
-    while (m_previewImagesLay && m_previewImagesLay->count() > 1) {
+    while (m_previewImagesLay && m_previewImagesLay->count() > 0) {
         QLayoutItem* item = m_previewImagesLay->takeAt(0);
         if (auto* w = item->widget()) w->deleteLater();
         delete item;
     }
+    m_previewImagePixmaps.clear();
+    m_previewImageLabels.clear();
     m_previewImagesScroll->setVisible(false);
 
     if (m_selectedKey.isEmpty()) {
@@ -1784,15 +1747,15 @@ void RefMenuPanel::rebuildPreview()
             }
             if (pm.isNull()) continue;
             auto* lab = new QLabel(m_previewImagesHost);
-            lab->setFixedHeight(108);
-            const int targetW = qMin(180, pm.width() * 108 / qMax(1, pm.height()));
-            lab->setPixmap(pm.scaled(targetW, 108, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            lab->setStyleSheet(QStringLiteral("border-radius:6px;"));
-            // insere antes do stretch
-            m_previewImagesLay->insertWidget(m_previewImagesLay->count() - 1, lab);
+            lab->setAlignment(Qt::AlignCenter);
+            lab->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            m_previewImagePixmaps.append(pm);
+            m_previewImageLabels.append(lab);
+            m_previewImagesLay->addWidget(lab);
         }
-        if (m_previewImagesLay->count() > 1) {
+        if (!m_previewImageLabels.isEmpty()) {
             m_previewImagesScroll->setVisible(true);
+            rescalePreviewImages();
         }
     }
 
@@ -1842,6 +1805,32 @@ void RefMenuPanel::rebuildPreview()
     // Doc novo herda o tamanho de fonte do ciclo Aa, vencendo o font-size
     // inline do HTML salvo.
     applyPreviewFont();
+}
+
+void RefMenuPanel::rescalePreviewImages()
+{
+    if (!m_previewImagesScroll || m_previewImagePixmaps.isEmpty()) return;
+
+    const int w = m_previewImagesScroll->viewport()->width();
+    if (w <= 0) return;
+
+    int totalH = 0;
+    for (int i = 0; i < m_previewImagePixmaps.size() && i < m_previewImageLabels.size(); ++i) {
+        const QPixmap& pm = m_previewImagePixmaps.at(i);
+        QLabel* lab = m_previewImageLabels.at(i);
+        if (!lab || pm.isNull()) continue;
+        const int h = pm.height() * w / qMax(1, pm.width());
+        lab->setFixedHeight(h);
+        lab->setPixmap(pm.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        if (totalH > 0) totalH += m_previewImagesLay->spacing();
+        totalH += h;
+    }
+
+    // A QScrollArea não cresce com o conteúdo por conta própria (widgetResizable
+    // só controla a largura/altura do widget interno). Ajusta a altura da área
+    // pra caber a(s) imagem(ns) inteira(s), até o teto de 360px (acima disso,
+    // scroll vertical).
+    m_previewImagesScroll->setFixedHeight(qBound(1, totalH, 360));
 }
 
 void RefMenuPanel::applyPreviewFont()
@@ -1923,18 +1912,40 @@ void RefMenuPanel::extractImagesFromHtml(const QString& html, QStringList* image
     if (imagesOut) imagesOut->clear();
     if (html.isEmpty()) return;
 
-    QRegularExpression re(QStringLiteral("<img\\b[^>]*?>"),
-                          QRegularExpression::CaseInsensitiveOption);
+    // Imagens flutuantes (inseridas via QTextFrame no editor principal) são
+    // serializadas pelo toHtml() como uma <table> envolvendo o <img>. Extrai
+    // primeiro esses wrappers completos, senão a <table> vazia sobra no HTML
+    // e renderiza como um retângulo com borda no preview.
+    QRegularExpression reTable(QStringLiteral("<table\\b[^>]*>(?:(?!</table>).)*?(<img\\b[^>]*?>)(?:(?!</table>).)*?</table>"),
+                                QRegularExpression::CaseInsensitiveOption
+                                | QRegularExpression::DotMatchesEverythingOption);
+
+    QString working = html;
     int last = 0;
     QString out;
-    auto it = re.globalMatch(html);
+    auto itTable = reTable.globalMatch(working);
+    while (itTable.hasNext()) {
+        QRegularExpressionMatch m = itTable.next();
+        if (m.capturedStart() > last) out.append(working.mid(last, m.capturedStart() - last));
+        if (imagesOut) imagesOut->append(m.captured(1));
+        last = m.capturedEnd();
+    }
+    if (last < working.size()) out.append(working.mid(last));
+    working = out;
+
+    // Segunda passada: imagens "soltas" (não envolvidas por <table>).
+    QRegularExpression re(QStringLiteral("<img\\b[^>]*?>"),
+                          QRegularExpression::CaseInsensitiveOption);
+    last = 0;
+    out.clear();
+    auto it = re.globalMatch(working);
     while (it.hasNext()) {
         QRegularExpressionMatch m = it.next();
-        if (m.capturedStart() > last) out.append(html.mid(last, m.capturedStart() - last));
+        if (m.capturedStart() > last) out.append(working.mid(last, m.capturedStart() - last));
         if (imagesOut) imagesOut->append(m.captured(0));
         last = m.capturedEnd();
     }
-    if (last < html.size()) out.append(html.mid(last));
+    if (last < working.size()) out.append(working.mid(last));
     if (restOut) *restOut = out;
 }
 
@@ -1942,6 +1953,9 @@ QString RefMenuPanel::resolveImageSrc(const QString& src) const
 {
     if (src.isEmpty()) return src;
     if (src.startsWith(QStringLiteral("data:"))) return src;
+    // Imagens inseridas pelo editor principal usam URL absoluta file:///...
+    QUrl url(src);
+    if (url.isLocalFile()) return url.toLocalFile();
     if (m_projectRoot.isEmpty()) return src;
     QString s = src;
     if (s.startsWith(QStringLiteral("./"))) s = s.mid(2);
@@ -2008,6 +2022,46 @@ void RefMenuPanel::onDrawerPickerClicked()
     m_drawerPickerBtn->setChecked(m_sourceKind != SourceKind::Manuscript);
 }
 
+void RefMenuPanel::onManuscriptPickerClicked()
+{
+    if (!m_model || !m_msTabBtn) return;
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(R"(
+        QMenu {
+            background: %1; color: %2;
+            border: 1px solid %3; border-radius: 6px;
+            padding: 4px;
+        }
+        QMenu::item { padding: 6px 24px 6px 28px; border-radius: 4px; }
+        QMenu::item:selected { background: %4; color: %5; }
+        QMenu::separator { height: 1px; background: %3; margin: 4px 6px; }
+    )").arg(Theme::panelBackground(),
+           Theme::textPrimary(),
+           Theme::panelBorder(),
+           Theme::accentInfoSoft(),
+           Theme::textBright()));
+
+    QIcon icMs = IconUtils::loadToolbarIcon(QStringLiteral(":/icons/elements/manuscript.svg"),
+        QColor(Theme::textMuted()), QColor(Theme::textBright()), QColor(Theme::textBright()),
+        QSize(14, 14));
+
+    for (const auto& m : m_model->manuscripts()) {
+        const QString title = m.title.isEmpty() ? tr("Manuscrito") : m.title;
+        QAction* a = menu.addAction(title);
+        if (!icMs.isNull()) a->setIcon(icMs);
+        const QString id = m.id;
+        connect(a, &QAction::triggered, this, [this, id]() {
+            if (id == m_currentManuscriptId && m_sourceKind == SourceKind::Manuscript) return;
+            changeSelectedKey(QString());
+            enterManuscriptMode(id);
+        });
+    }
+
+    QPoint at = m_msTabBtn->mapToGlobal(QPoint(0, m_msTabBtn->height()));
+    menu.exec(at);
+    m_msTabBtn->setChecked(m_sourceKind == SourceKind::Manuscript);
+}
+
 // =========================================================================
 // Estado: modos
 // =========================================================================
@@ -2061,6 +2115,84 @@ QString RefMenuPanel::selectedCacheKey() const
     return QString();
 }
 
+QString RefMenuPanel::editableCacheKey() const
+{
+    // Só capítulos e itens de gaveta têm um HTML completo de 1:1 com a
+    // chave de cache. Cenas individuais (parte de um capítulo) ficam de
+    // fora por ora.
+    if (!m_selectedKey.startsWith(QStringLiteral("ch:"))
+        && !m_selectedKey.startsWith(QStringLiteral("it:"))) {
+        return QString();
+    }
+    const QString key = selectedCacheKey();
+    if (key.isEmpty()) return QString();
+    // Evita conflito com o editor principal: se o mesmo doc está aberto lá,
+    // edição fica bloqueada no RefMenu.
+    if (m_host && m_host->activeKey() == key) return QString();
+    return key;
+}
+
+void RefMenuPanel::updateEditAvailability()
+{
+    if (!m_editBtn) return;
+
+    if (m_editing) {
+        commitEdit();
+        m_editing = false;
+        m_editingKey.clear();
+        if (m_preview) {
+            m_preview->setReadOnly(true);
+            m_preview->setStyleSheet(QString());
+        }
+        QSignalBlocker b(m_editBtn);
+        m_editBtn->setChecked(false);
+    }
+
+    const QString key = editableCacheKey();
+    m_editBtn->setEnabled(!key.isEmpty());
+
+    if (!key.isEmpty()) {
+        m_editBtn->setToolTip(tr("Editar documento"));
+    } else if (m_selectedKey.startsWith(QStringLiteral("sc:"))) {
+        m_editBtn->setToolTip(tr("Edição de cena individual em breve"));
+    } else if (m_host && !m_selectedKey.isEmpty() && m_host->activeKey() == selectedCacheKey()) {
+        m_editBtn->setToolTip(tr("Este documento está aberto no editor principal"));
+    } else {
+        m_editBtn->setToolTip(tr("Editar documento"));
+    }
+}
+
+void RefMenuPanel::commitEdit()
+{
+    if (!m_editing || !m_preview || !m_cache || m_editingKey.isEmpty()) return;
+    m_cache->set(m_editingKey, m_preview->toHtml(), /*markDirty=*/true);
+}
+
+void RefMenuPanel::onToggleEdit(bool on)
+{
+    if (!m_preview) return;
+
+    if (on) {
+        m_editingKey = editableCacheKey();
+        if (m_editingKey.isEmpty()) {
+            QSignalBlocker b(m_editBtn);
+            m_editBtn->setChecked(false);
+            return;
+        }
+        m_editing = true;
+        m_preview->setReadOnly(false);
+        m_preview->setStyleSheet(QStringLiteral("QTextBrowser#refPreview { background: %1; }")
+                                      .arg(Theme::inputBackground()));
+        m_preview->setFocus();
+    } else {
+        commitEdit();
+        m_editing = false;
+        m_editingKey.clear();
+        m_preview->setReadOnly(true);
+        m_preview->setStyleSheet(QString());
+    }
+}
+
 void RefMenuPanel::setSelected(const QString& key)
 {
     changeSelectedKey(key);
@@ -2085,6 +2217,19 @@ void RefMenuPanel::openPanel()
 
 void RefMenuPanel::closePanel()
 {
+    if (m_editing) {
+        commitEdit();
+        m_editing = false;
+        m_editingKey.clear();
+        if (m_preview) {
+            m_preview->setReadOnly(true);
+            m_preview->setStyleSheet(QString());
+        }
+        if (m_editBtn) {
+            QSignalBlocker b(m_editBtn);
+            m_editBtn->setChecked(false);
+        }
+    }
     hide();
     emit geometryChanged();
 }
@@ -2102,6 +2247,22 @@ void RefMenuPanel::openForDrawer(const QString& drawerKey, const QString& itemId
         changeSelectedKey(QStringLiteral("it:%1").arg(itemId));
         rebuildPreview();
     }
+    if (!isVisible()) openPanel();
+    else { show(); raise(); }
+}
+
+void RefMenuPanel::openForChapter(const QString& manuscriptId, const QString& chapterId)
+{
+    enterManuscriptMode(manuscriptId);
+    setSelected(QStringLiteral("ch:%1:%2").arg(manuscriptId, chapterId));
+    if (!isVisible()) openPanel();
+    else { show(); raise(); }
+}
+
+void RefMenuPanel::openForScene(const QString& manuscriptId, const QString& chapterId, int sceneIndex)
+{
+    enterManuscriptMode(manuscriptId);
+    setSelected(QStringLiteral("sc:%1:%2:%3").arg(manuscriptId, chapterId).arg(sceneIndex));
     if (!isVisible()) openPanel();
     else { show(); raise(); }
 }
@@ -2273,6 +2434,7 @@ void RefMenuPanel::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     layoutResizeHandles();
     if (m_previewFind && m_previewFind->isVisible()) positionPreviewFindBar();
+    QTimer::singleShot(0, this, [this]() { rescalePreviewImages(); });
     emit geometryChanged();
     scheduleGeometrySave();
 }
@@ -2280,15 +2442,15 @@ void RefMenuPanel::resizeEvent(QResizeEvent* event)
 void RefMenuPanel::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    // Garante que se a geometria salva nos colocou fora do pai (resize do
-    // app, etc.), recolocamos pra dentro.
-    if (auto* p = parentWidget()) {
-        QRect pg = p->rect();
+    // Garante que se a geometria salva ficou fora de qualquer tela (monitor
+    // desconectado, etc.), recolocamos dentro da tela mais próxima.
+    if (const QScreen* scr = screen()) {
+        QRect sg = scr->availableGeometry();
         QRect g = geometry();
-        if (g.right() > pg.right()) g.moveRight(pg.right() - 4);
-        if (g.bottom() > pg.bottom()) g.moveBottom(pg.bottom() - 4);
-        if (g.left() < pg.left() + 4) g.moveLeft(pg.left() + 4);
-        if (g.top() < pg.top() + 4) g.moveTop(pg.top() + 4);
+        if (g.right() > sg.right()) g.moveRight(sg.right() - 4);
+        if (g.bottom() > sg.bottom()) g.moveBottom(sg.bottom() - 4);
+        if (g.left() < sg.left() + 4) g.moveLeft(sg.left() + 4);
+        if (g.top() < sg.top() + 4) g.moveTop(sg.top() + 4);
         if (g != geometry()) setGeometry(g);
     }
 }
@@ -2419,13 +2581,7 @@ bool RefMenuPanel::eventFilter(QObject* watched, QEvent* event)
         } else if (event->type() == QEvent::MouseMove) {
             if (m_dragging) {
                 auto* me = static_cast<QMouseEvent*>(event);
-                QPoint newPos = me->globalPosition().toPoint() - m_dragOffset;
-                // clamp dentro do pai
-                if (auto* p = parentWidget()) {
-                    const QRect pg = p->rect();
-                    newPos.setX(qBound(pg.left() + 4, newPos.x(), pg.right() - width() + 4));
-                    newPos.setY(qBound(pg.top() + 4, newPos.y(), pg.bottom() - height() + 4));
-                }
+                const QPoint newPos = me->globalPosition().toPoint() - m_dragOffset;
                 move(newPos);
                 return true;
             }
@@ -2437,11 +2593,13 @@ bool RefMenuPanel::eventFilter(QObject* watched, QEvent* event)
                 return true;
             }
         } else if (event->type() == QEvent::MouseButtonDblClick) {
-            // duplo clique no drag handle → reseta posição/tamanho ao canto direito
+            // duplo clique no drag handle → reseta posição/tamanho ao canto
+            // direito da janela principal do app.
             if (auto* p = parentWidget()) {
+                const QRect pg = p->window()->geometry();
                 const int margin = 12;
-                resize(kDefaultW, qMax(kMinH, p->height() - margin * 2));
-                move(p->width() - width() - margin, margin);
+                resize(kDefaultW, qMax(kMinH, pg.height() - margin * 2));
+                move(pg.right() - width() - margin, pg.top() + margin);
                 scheduleGeometrySave();
             }
             return true;
