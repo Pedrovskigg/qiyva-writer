@@ -477,6 +477,7 @@ QFrame* WordCountPanel::buildGoalSection()
         if (m_folgaPanel) {
             m_folgaPanel->setVisible(on);
             if (!on) setLazyassMode(false); // Mira 1: fechar painel F desativa lazyass
+            updateScrollSizing(); // recalcula a altura do scroll com o painel de folgas
             adjustSize();
             emit geometryChanged();
         }
@@ -759,16 +760,23 @@ bool WordCountPanel::eventFilter(QObject* watched, QEvent* event)
     // Auto-close: clicar no editor ou em qualquer lugar fora do painel recolhe o
     // modo full (volta ao compacto). Ignora cliques no próprio painel e em janelas
     // dependentes dele (diálogo de estatísticas, calendário, menus de contexto).
-    if (event->type() == QEvent::MouseButtonPress && m_fullMode) {
-        // IMPORTANTE: o filtro global vê o press 2x — uma para a QWidgetWindow
-        // (qobject_cast<QWidget*> == null) e uma para o widget alvo. Só tratamos
-        // o evento do widget; ignorar o da janela evita fechar em QUALQUER clique.
-        if (auto* w = qobject_cast<QWidget*>(watched)) {
-            const bool insidePanel = this->isAncestorOf(w)
-                || (w->window() && this->isAncestorOf(w->window()));
-            if (!insidePanel)
-                setFullMode(false); // não consome o evento: clique no editor segue normal
+    // Auto-close só vale quando NÃO há diálogo modal aberto (detalhe do dia, picker
+    // de status — modais, aparecem longe do painel; clicar neles não pode recolher).
+    if (event->type() == QEvent::MouseButtonPress && m_fullMode
+        && !QApplication::activeModalWidget()) {
+        // NÃO usar `watched`: quando o clique cai numa área não-interativa (célula
+        // do calendário, fundo de frame), o press é ignorado e PROPAGA pelos pais
+        // até sair do painel, fazendo o filtro ver um alvo "de fora". Em vez disso,
+        // usamos o widget REALMENTE sob o cursor (widgetAt) e subimos a cadeia de
+        // pais (que cruza fronteiras de janela, cobrindo o diálogo de estatísticas).
+        const QPoint gp = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+        QWidget* hit = QApplication::widgetAt(gp);
+        bool insidePanel = false;
+        for (QWidget* p = hit; p; p = p->parentWidget()) {
+            if (p == this) { insidePanel = true; break; }
         }
+        if (!insidePanel)
+            setFullMode(false); // não consome o evento: clique no editor segue normal
     }
 
     if (watched == m_body && event->type() == QEvent::MouseButtonRelease) {
@@ -1095,6 +1103,7 @@ void WordCountPanel::startSprint()
     tickSprint();
     m_sprintTimer->start();
 
+    updateScrollSizing();
     adjustSize();
     emit geometryChanged();
 }

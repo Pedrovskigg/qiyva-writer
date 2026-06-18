@@ -295,7 +295,7 @@ void WordCounterCalendar::refresh()
         const bool* show = kShow[qBound(0, stars, 5)];
         if (stars > 0) {
             const QString starQss = QStringLiteral(
-                "font-size:7px;color:%1;background:transparent;border:none;").arg(starColor);
+                "font-size:10px;color:%1;background:transparent;border:none;").arg(starColor);
             for (int si = 0; si < 5; ++si) {
                 auto* s = new QLabel(QStringLiteral("★"), cell);
                 s->setObjectName(QStringLiteral("wcpCalStar"));
@@ -303,7 +303,7 @@ void WordCounterCalendar::refresh()
                 s->setAttribute(Qt::WA_TransparentForMouseEvents);
                 s->setAlignment(Qt::AlignCenter);
                 s->setStyleSheet(starQss);
-                s->setGeometry(0, 0, 8, 8); // posição real vem do QEvent::Resize
+                s->setGeometry(0, 0, 11, 11); // posição real vem do QEvent::Resize
                 s->setVisible(show[si]);
             }
         }
@@ -382,7 +382,7 @@ bool WordCounterCalendar::eventFilter(QObject* watched, QEvent* event)
         auto* cell = qobject_cast<QLabel*>(watched);
         if (cell && cell->objectName() == QLatin1String("wcpCalDay")) {
             const int W = cell->width(), H = cell->height();
-            const int sz = 8;
+            const int sz = 11;
             const QPoint pts[5] = {
                 {1,       1      },               // TL
                 {W-sz-1,  1      },               // TR
