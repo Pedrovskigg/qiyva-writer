@@ -350,11 +350,17 @@ void EditorHost::loadIntoEditor(const QString& html) {
 void EditorHost::replaceContent(const QString& html) {
     if (!m_editor) return;
     m_loadingContent = true;
+    auto* doc = m_editor->document();
+    const bool undoWas = doc->isUndoRedoEnabled();
+    doc->setUndoRedoEnabled(false);
+    m_editor->setUpdatesEnabled(false);
     if (html.isEmpty()) {
         m_editor->clear();
     } else {
         m_editor->setHtml(html);
     }
+    doc->setUndoRedoEnabled(undoWas);
+    m_editor->setUpdatesEnabled(true);
     emit contentLoaded();
     m_loadingContent = false;
 }

@@ -64,8 +64,9 @@ void UpdateChecker::onReplyFinished(QNetworkReply* reply)
     }
     if (downloadUrl.isEmpty()) return;
 
-    const QString releaseUrl = obj.value(QStringLiteral("html_url")).toString();
-    emit updateAvailable(tag, downloadUrl, releaseUrl);
+    const QString releaseUrl   = obj.value(QStringLiteral("html_url")).toString();
+    const QString releaseNotes = obj.value(QStringLiteral("body")).toString();
+    emit updateAvailable(tag, downloadUrl, releaseUrl, releaseNotes);
 }
 
 int UpdateChecker::compareVersions(const QString& a, const QString& b)

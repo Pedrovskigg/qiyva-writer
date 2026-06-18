@@ -6,23 +6,23 @@
     <message>
         <location filename="../src/AmbiencePanel.cpp" line="74"/>
         <source>Som ambiente</source>
-        <translation type="unfinished"></translation>
+        <translation>Ambient sound</translation>
     </message>
     <message>
         <location filename="../src/AmbiencePanel.cpp" line="105"/>
         <location filename="../src/AmbiencePanel.cpp" line="248"/>
         <source>Reproduzir</source>
-        <translation type="unfinished"></translation>
+        <translation>Play</translation>
     </message>
     <message>
         <location filename="../src/AmbiencePanel.cpp" line="194"/>
         <source>Pasta de sons não encontrada: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Sound folder not found: %1</translation>
     </message>
     <message>
         <location filename="../src/AmbiencePanel.cpp" line="248"/>
         <source>Pausar</source>
-        <translation type="unfinished"></translation>
+        <translation>Pause</translation>
     </message>
 </context>
 <context>

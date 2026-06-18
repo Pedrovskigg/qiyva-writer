@@ -1249,6 +1249,29 @@ void ProjectModel::loadFromJson(const QJsonObject& root) {
     m_ui = root.value(QStringLiteral("ui")).toObject();
 
     QJsonObject data = root.value(QStringLiteral("data")).toObject();
+
+    // Migração: versões antigas salvavam wordCounter em data.wordCounter;
+    // versões novas usam settings.wordCounter. Copia entradas de progress
+    // que ainda não existem no destino (operação idempotente).
+    {
+        const QJsonObject dataWc      = data.value(QStringLiteral("wordCounter")).toObject();
+        const QJsonObject dataProgress = dataWc.value(QStringLiteral("progress")).toObject();
+        if (!dataProgress.isEmpty()) {
+            QJsonObject settingsWc      = m_settings.value(QStringLiteral("wordCounter")).toObject();
+            QJsonObject settingsProgress = settingsWc.value(QStringLiteral("progress")).toObject();
+            bool changed = false;
+            for (const QString& key : dataProgress.keys()) {
+                if (!settingsProgress.contains(key)) {
+                    settingsProgress.insert(key, dataProgress.value(key));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                settingsWc.insert(QStringLiteral("progress"), settingsProgress);
+                m_settings.insert(QStringLiteral("wordCounter"), settingsWc);
+            }
+        }
+    }
     m_manuscripts.clear();
     const QJsonArray manuscripts = data.value(QStringLiteral("manuscripts")).toArray();
     for (const auto& mv : manuscripts) m_manuscripts.append(manuscriptFromJson(mv.toObject()));

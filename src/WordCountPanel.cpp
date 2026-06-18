@@ -5,8 +5,10 @@
 #include "Theme.h"
 #include "WordCounter.h"
 #include "WordCounterCalendar.h"
+#include "WritingStatsDialog.h"
 
 #include <QApplication>
+#include <QScreen>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QEvent>
@@ -21,7 +23,10 @@
 #include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSpinBox>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -58,6 +63,7 @@ WordCountPanel::WordCountPanel(WordCounter* counter, EditorHost* host, ProjectMo
     qApp->installEventFilter(this);
     refreshFromSettings();
     refresh();
+    updateScrollSizing(); // dimensiona o scroll para o conteúdo inicial (compacto)
 }
 
 void WordCountPanel::buildUi()
@@ -94,11 +100,35 @@ void WordCountPanel::buildUi()
     bodyLayout->setSpacing(8);
 
     auto* headerRow = new QHBoxLayout();
-    headerRow->setSpacing(0);
+    headerRow->setSpacing(4);
     auto* contadorTitle = new QLabel(tr("Contador"), m_body);
     contadorTitle->setObjectName(QStringLiteral("wcpSectionTitle"));
     headerRow->addWidget(contadorTitle);
     headerRow->addStretch();
+
+    auto* statsBtn = new QToolButton(m_body);
+    statsBtn->setObjectName(QStringLiteral("wcpResetBtn"));
+    statsBtn->setText(tr("Estatísticas"));
+    statsBtn->setCursor(Qt::PointingHandCursor);
+    statsBtn->setAutoRaise(true);
+    connect(statsBtn, &QToolButton::clicked, this, [this, statsBtn]() {
+        auto* dlg = new WritingStatsDialog(m_counter, this);
+        dlg->show(); // show() antes de posicionar para ter a altura real do dialog
+
+        const QRect screen = statsBtn->screen()->availableGeometry();
+        const QPoint btnTopLeft = statsBtn->mapToGlobal(QPoint(0, 0));
+        int x = btnTopLeft.x();
+        int y = btnTopLeft.y() - dlg->height() - 4; // preferência: acima do botão
+        // Se não couber acima (botão colado no topo da tela), abre abaixo do botão.
+        if (y < screen.top() + 4)
+            y = statsBtn->mapToGlobal(QPoint(0, statsBtn->height())).y() + 4;
+        // Garante que o dialog inteiro (incluindo o botão de fechar) fique na tela.
+        x = qBound(screen.left() + 4, x, screen.right()  - dlg->width()  - 4);
+        y = qBound(screen.top()  + 4, y, screen.bottom() - dlg->height() - 4);
+        dlg->move(x, y);
+    });
+    headerRow->addWidget(statsBtn);
+
     bodyLayout->addLayout(headerRow);
 
     auto* cards = new QHBoxLayout();
@@ -144,17 +174,24 @@ void WordCountPanel::buildUi()
     m_compactGoalResetLabel->setVisible(false);
     bodyLayout->addWidget(m_compactGoalResetLabel);
 
-    outer->addWidget(m_body);
+    // Largura fixa do painel (compact e full iguais). Impede que a grade de
+    // estatísticas (3 colunas) ou um dia com 5 estrelas estiquem o painel —
+    // os stats longos quebram em 2 linhas dentro da coluna, como no Mira 1.
+    const int kPanelWidth = 256;
+    const int kScrollBarW = 8; // gutter reservado para a barra de rolagem
+    m_body->setFixedWidth(kPanelWidth);
 
     // Full body — só visível em full mode.
     m_fullBody = new QFrame(this);
     m_fullBody->setObjectName(QStringLiteral("wcpFullBody"));
     m_fullBody->setAttribute(Qt::WA_StyledBackground, true);
+    m_fullBody->setFixedWidth(kPanelWidth);
     auto* fullLayout = new QVBoxLayout(m_fullBody);
     fullLayout->setContentsMargins(0, 8, 0, 0);
     fullLayout->setSpacing(8);
     fullLayout->addWidget(buildScopeSection());
     fullLayout->addWidget(buildGoalSection());
+    fullLayout->addWidget(buildSprintSection());
 
     // Toggle "Exibir calendário" + calendário (hidden by default)
     m_calendarToggleBtn = new QToolButton(m_fullBody);
@@ -170,8 +207,10 @@ void WordCountPanel::buildUi()
         // correto ANTES do adjustSize, evitando que m_body estique para preencher
         // o espaço sobrante do calendário que acabou de ser ocultado.
         QMetaObject::invokeMethod(this, [this]() {
+            updateScrollSizing();
             adjustSize();
             emit geometryChanged();
+            if (m_calendarVisible) scrollToBottom(); // calendário visível por padrão
         }, Qt::QueuedConnection);
     });
     fullLayout->addWidget(m_calendarToggleBtn);
@@ -179,13 +218,40 @@ void WordCountPanel::buildUi()
     m_calendar = new WordCounterCalendar(m_counter, m_fullBody);
     m_calendar->setVisible(false);
     connect(m_calendar, &WordCounterCalendar::geometryChanged, this, [this]() {
+        updateScrollSizing();
         adjustSize();
         emit geometryChanged();
     });
     fullLayout->addWidget(m_calendar);
 
     m_fullBody->setVisible(false);
-    outer->addWidget(m_fullBody);
+
+    // Conteúdo (cards + full body) dentro de um QScrollArea. Quando o painel fica
+    // mais alto que o espaço visível (calendário aberto), o conteúdo rola em vez de
+    // ser cortado fora de alcance. O toggle ▼ fica FORA do scroll (sempre visível).
+    m_scrollContent = new QWidget();
+    m_scrollContent->setObjectName(QStringLiteral("wcpScrollContent"));
+    m_scrollContent->setAttribute(Qt::WA_StyledBackground, false);
+    m_scrollContent->setFixedWidth(kPanelWidth);
+    auto* scrollLay = new QVBoxLayout(m_scrollContent);
+    scrollLay->setContentsMargins(0, 0, 0, 0);
+    scrollLay->setSpacing(0);
+    scrollLay->addWidget(m_body);
+    scrollLay->addWidget(m_fullBody);
+
+    m_scrollArea = new QScrollArea(this);
+    m_scrollArea->setObjectName(QStringLiteral("wcpScroll"));
+    m_scrollArea->setWidget(m_scrollContent);
+    // widgetResizable(false): o conteúdo mantém a largura fixa de 256 (os frames
+    // não encolhem abaixo do mínimo da grade de stats); a barra de rolagem fica no
+    // gutter à direita sem roubar largura do conteúdo.
+    m_scrollArea->setWidgetResizable(false);
+    m_scrollArea->setFrameShape(QFrame::NoFrame);
+    m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_scrollArea->setFixedWidth(kPanelWidth + kScrollBarW);
+    m_scrollArea->viewport()->setAutoFillBackground(false);
+    outer->addWidget(m_scrollArea);
 
     applyThemeStyle();
 
@@ -209,6 +275,20 @@ void WordCountPanel::applyThemeStyle()
 
     setStyleSheet(QStringLiteral(R"(
         QWidget#wordCountPanel { background: transparent; }
+        QScrollArea#wcpScroll { background: transparent; border: none; }
+        QScrollArea#wcpScroll > QWidget > QWidget { background: transparent; }
+        QWidget#wcpScrollContent { background: transparent; }
+        QScrollArea#wcpScroll QScrollBar:vertical {
+            background: transparent; width: 6px; margin: 0;
+        }
+        QScrollArea#wcpScroll QScrollBar::handle:vertical {
+            background: %5; border-radius: 3px; min-height: 24px;
+        }
+        QScrollArea#wcpScroll QScrollBar::handle:vertical:hover { background: %7; }
+        QScrollArea#wcpScroll QScrollBar::add-line:vertical,
+        QScrollArea#wcpScroll QScrollBar::sub-line:vertical { height: 0; }
+        QScrollArea#wcpScroll QScrollBar::add-page:vertical,
+        QScrollArea#wcpScroll QScrollBar::sub-page:vertical { background: transparent; }
         QFrame#wcpBody, QFrame#wcpFullBody, QFrame#wcpSection {
             background: %1;
             border: 1px solid %4;
@@ -505,9 +585,13 @@ QFrame* WordCountPanel::buildGoalSection()
     auto makeStat = [section](QLabel** out) {
         auto* lbl = new QLabel(QString(), section);
         lbl->setObjectName(QStringLiteral("wcpMeta"));
+        lbl->setWordWrap(true); // stats longos quebram em 2 linhas em vez de alargar o painel
         *out = lbl;
         return lbl;
     };
+    statsGrid->setColumnStretch(0, 1);
+    statsGrid->setColumnStretch(1, 1);
+    statsGrid->setColumnStretch(2, 1);
     statsGrid->addWidget(makeStat(&m_statStreak),   0, 0);
     statsGrid->addWidget(makeStat(&m_statRecord),   0, 1);
     statsGrid->addWidget(makeStat(&m_statToday),    0, 2);
@@ -617,9 +701,11 @@ void WordCountPanel::setExpanded(bool expanded)
 {
     if (m_expanded == expanded) return;
     m_expanded = expanded;
+    if (m_scrollArea) m_scrollArea->setVisible(expanded);
     if (m_body) m_body->setVisible(expanded);
     if (m_fullBody) m_fullBody->setVisible(expanded && m_fullMode);
     updateToggleArrow();
+    updateScrollSizing();
     adjustSize();
     emit geometryChanged();
 }
@@ -629,12 +715,62 @@ void WordCountPanel::setFullMode(bool full)
     if (m_fullMode == full) return;
     m_fullMode = full;
     if (m_fullBody) m_fullBody->setVisible(m_expanded && m_fullMode);
+    updateScrollSizing();
     adjustSize();
     emit geometryChanged();
+    if (full && m_calendarVisible) scrollToBottom();
+}
+
+void WordCountPanel::setAvailableHeight(int h)
+{
+    h = qMax(60, h);
+    if (m_maxBodyHeight == h) return;
+    m_maxBodyHeight = h;
+    updateScrollSizing();
+    // Não emite geometryChanged: quem chama (positionWordCountPanel) reposiciona.
+}
+
+void WordCountPanel::updateScrollSizing()
+{
+    if (!m_scrollArea || !m_scrollContent) return;
+    if (!m_expanded) { m_scrollArea->setFixedHeight(0); return; }
+    if (m_scrollContent->layout()) m_scrollContent->layout()->activate();
+    const int contentH = m_scrollContent->sizeHint().height();
+    // widgetResizable(false): precisamos dimensionar o conteúdo manualmente.
+    m_scrollContent->resize(m_scrollContent->width(), contentH);
+    int h = contentH;
+    if (m_maxBodyHeight > 0) h = qMin(h, m_maxBodyHeight);
+    m_scrollArea->setFixedHeight(qMax(0, h));
+}
+
+void WordCountPanel::scrollToBottom()
+{
+    if (!m_scrollArea) return;
+    // Adia: a barra só conhece o máximo após o relayout deste ciclo.
+    QMetaObject::invokeMethod(this, [this]() {
+        if (m_scrollArea)
+            m_scrollArea->verticalScrollBar()->setValue(
+                m_scrollArea->verticalScrollBar()->maximum());
+    }, Qt::QueuedConnection);
 }
 
 bool WordCountPanel::eventFilter(QObject* watched, QEvent* event)
 {
+    // Auto-close: clicar no editor ou em qualquer lugar fora do painel recolhe o
+    // modo full (volta ao compacto). Ignora cliques no próprio painel e em janelas
+    // dependentes dele (diálogo de estatísticas, calendário, menus de contexto).
+    if (event->type() == QEvent::MouseButtonPress && m_fullMode) {
+        // IMPORTANTE: o filtro global vê o press 2x — uma para a QWidgetWindow
+        // (qobject_cast<QWidget*> == null) e uma para o widget alvo. Só tratamos
+        // o evento do widget; ignorar o da janela evita fechar em QUALQUER clique.
+        if (auto* w = qobject_cast<QWidget*>(watched)) {
+            const bool insidePanel = this->isAncestorOf(w)
+                || (w->window() && this->isAncestorOf(w->window()));
+            if (!insidePanel)
+                setFullMode(false); // não consome o evento: clique no editor segue normal
+        }
+    }
+
     if (watched == m_body && event->type() == QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(event);
         if (me->button() == Qt::LeftButton) {
@@ -866,6 +1002,152 @@ void WordCountPanel::refresh()
     }
 
     setToolTip(tr("Clique para abrir a meta diária\nBotão direito para personalizar o contador"));
+}
+
+QFrame* WordCountPanel::buildSprintSection()
+{
+    auto* section = new QFrame(m_fullBody);
+    section->setObjectName(QStringLiteral("wcpSection"));
+    section->setAttribute(Qt::WA_StyledBackground, true);
+    m_sprintBody = section;
+    auto* lay = new QVBoxLayout(section);
+    lay->setContentsMargins(12, 10, 12, 12);
+    lay->setSpacing(6);
+
+    auto* title = new QLabel(tr("Sprint de escrita"), section);
+    title->setObjectName(QStringLiteral("wcpSectionTitle"));
+    lay->addWidget(title);
+
+    // Configuração em 2 linhas (como as outras seções) — spinbox estica para
+    // preencher a largura disponível sem empurrar o painel.
+    auto* configGrid = new QGridLayout();
+    configGrid->setSpacing(4);
+    configGrid->setColumnStretch(1, 1);
+
+    auto* durLabel = new QLabel(tr("Duração:"), section);
+    durLabel->setObjectName(QStringLiteral("wcpMeta"));
+    m_sprintMinutesSpin = new QSpinBox(section);
+    m_sprintMinutesSpin->setRange(1, 120);
+    m_sprintMinutesSpin->setValue(25);
+    m_sprintMinutesSpin->setSuffix(tr(" min"));
+    configGrid->addWidget(durLabel,           0, 0);
+    configGrid->addWidget(m_sprintMinutesSpin, 0, 1);
+
+    auto* metaLabel = new QLabel(tr("Meta:"), section);
+    metaLabel->setObjectName(QStringLiteral("wcpMeta"));
+    m_sprintWordsSpin = new QSpinBox(section);
+    m_sprintWordsSpin->setRange(0, 10000);
+    m_sprintWordsSpin->setValue(300);
+    m_sprintWordsSpin->setSuffix(tr(" palavras"));
+    m_sprintWordsSpin->setSingleStep(50);
+    configGrid->addWidget(metaLabel,          1, 0);
+    configGrid->addWidget(m_sprintWordsSpin,  1, 1);
+
+    lay->addLayout(configGrid);
+
+    // Labels de status (visíveis só durante sprint ativo)
+    auto* statusRow = new QHBoxLayout();
+    statusRow->setSpacing(10);
+
+    m_sprintTimerLabel = new QLabel(section);
+    m_sprintTimerLabel->setObjectName(QStringLiteral("wcpSectionTitle"));
+    m_sprintTimerLabel->setVisible(false);
+    statusRow->addWidget(m_sprintTimerLabel);
+
+    m_sprintWordsLabel = new QLabel(section);
+    m_sprintWordsLabel->setObjectName(QStringLiteral("wcpMeta"));
+    m_sprintWordsLabel->setVisible(false);
+    statusRow->addWidget(m_sprintWordsLabel);
+
+    statusRow->addStretch();
+    lay->addLayout(statusRow);
+
+    // Botão iniciar/parar
+    m_sprintActionBtn = new QPushButton(tr("Iniciar sprint"), section);
+    m_sprintActionBtn->setObjectName(QStringLiteral("wcpScopeBtn"));
+    m_sprintActionBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_sprintActionBtn, &QPushButton::clicked, this, [this]() {
+        if (m_sprintActive) stopSprint(); else startSprint();
+    });
+    lay->addWidget(m_sprintActionBtn);
+
+    // Timer interno (1 segundo)
+    m_sprintTimer = new QTimer(this);
+    m_sprintTimer->setInterval(1000);
+    connect(m_sprintTimer, &QTimer::timeout, this, &WordCountPanel::tickSprint);
+
+    return section;
+}
+
+void WordCountPanel::startSprint()
+{
+    if (!m_counter || m_sprintActive) return;
+    m_sprintActive = true;
+    m_sprintSecondsLeft = (m_sprintMinutesSpin ? m_sprintMinutesSpin->value() : 25) * 60;
+    m_sprintStartSession = m_counter->sessionWordsManuscript();
+
+    if (m_sprintMinutesSpin) m_sprintMinutesSpin->setEnabled(false);
+    if (m_sprintWordsSpin)   m_sprintWordsSpin->setEnabled(false);
+    if (m_sprintActionBtn)   m_sprintActionBtn->setText(tr("Encerrar sprint"));
+    if (m_sprintTimerLabel)  m_sprintTimerLabel->setVisible(true);
+    if (m_sprintWordsLabel)  m_sprintWordsLabel->setVisible(true);
+
+    tickSprint();
+    m_sprintTimer->start();
+
+    adjustSize();
+    emit geometryChanged();
+}
+
+void WordCountPanel::stopSprint()
+{
+    if (!m_sprintActive) return;
+    m_sprintTimer->stop();
+    m_sprintActive = false;
+
+    const int wordsWritten = m_counter
+        ? qMax(0, m_counter->sessionWordsManuscript() - m_sprintStartSession)
+        : 0;
+    const int goalWords = m_sprintWordsSpin ? m_sprintWordsSpin->value() : 300;
+    const bool goalMet = wordsWritten >= goalWords;
+
+    if (m_sprintMinutesSpin) m_sprintMinutesSpin->setEnabled(true);
+    if (m_sprintWordsSpin)   m_sprintWordsSpin->setEnabled(true);
+    if (m_sprintActionBtn)   m_sprintActionBtn->setText(tr("Iniciar sprint"));
+
+    if (m_sprintTimerLabel) {
+        m_sprintTimerLabel->setText(goalMet ? tr("✓ Meta batida!") : tr("Sprint encerrado"));
+    }
+    if (m_sprintWordsLabel) {
+        m_sprintWordsLabel->setText(tr("%1 palavras escritas").arg(wordsWritten));
+    }
+}
+
+void WordCountPanel::tickSprint()
+{
+    if (!m_sprintActive) return;
+
+    // Timer
+    if (m_sprintTimerLabel) {
+        const int m = m_sprintSecondsLeft / 60;
+        const int s = m_sprintSecondsLeft % 60;
+        m_sprintTimerLabel->setText(QStringLiteral("%1:%2")
+            .arg(m, 2, 10, QLatin1Char('0'))
+            .arg(s, 2, 10, QLatin1Char('0')));
+    }
+
+    // Palavras escritas neste sprint
+    if (m_sprintWordsLabel && m_counter) {
+        const int written = qMax(0, m_counter->sessionWordsManuscript() - m_sprintStartSession);
+        const int goal    = m_sprintWordsSpin ? m_sprintWordsSpin->value() : 300;
+        m_sprintWordsLabel->setText(tr("%1 / %2 palavras").arg(written).arg(goal));
+    }
+
+    if (m_sprintSecondsLeft <= 0) {
+        stopSprint();
+        return;
+    }
+    --m_sprintSecondsLeft;
 }
 
 void WordCountPanel::openCompactContextMenu(const QPoint& globalPos)

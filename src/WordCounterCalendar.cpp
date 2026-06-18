@@ -253,9 +253,6 @@ void WordCounterCalendar::refresh()
         const QString key = dayKey(date);
         const int stars = starsForDay(key);
 
-        QString starsStr;
-        for (int s = 0; s < stars; ++s) starsStr += QStringLiteral("★");
-
         auto* cell = new QLabel(this);
         cell->setObjectName(QStringLiteral("wcpCalDay"));
         cell->setAttribute(Qt::WA_StyledBackground, true);
@@ -270,8 +267,7 @@ void WordCounterCalendar::refresh()
             offType == WordCounter::OffDayType::Legit ? "legit" :
             offType == WordCounter::OffDayType::Stolen ? "stolen" : "none");
 
-        const QString numColor = isToday ? Theme::textBright() : Theme::textPrimary();
-        // Estrela dourada mantém cor própria (semântica de "ouro" não muda por tema).
+        const QString numColor  = isToday ? Theme::textBright() : Theme::textPrimary();
         const QString starColor = QStringLiteral("#e6c45a");
         QString moon;
         if (offType == WordCounter::OffDayType::Legit)
@@ -279,10 +275,38 @@ void WordCounterCalendar::refresh()
         else if (offType == WordCounter::OffDayType::Stolen)
             moon = QStringLiteral(" <span style='color:%1;'>☾</span>").arg(Theme::accentWarning());
 
+        // Apenas o número do dia no texto — estrelas NÃO entram no texto para não
+        // afetar o sizeHint da célula (mesma abordagem do Mira 1: position absolute).
         cell->setText(QStringLiteral(
-            "<div style='color:%1; font-size:11px; font-weight:600; line-height:1;'>%2%3</div>"
-            "<div style='color:%4; font-size:10px; line-height:1; margin-top:2px;'>%5</div>")
-            .arg(numColor).arg(d).arg(moon).arg(starColor).arg(starsStr));
+            "<span style='color:%1; font-size:11px; font-weight:600;'>%2%3</span>")
+            .arg(numColor).arg(d).arg(moon));
+
+        // Estrelas como filhos absolutos (não participam do layout).
+        // Padrão dado: 1=centro, 2=TL+TR, 3=TL+TR+centro, 4=4 cantos, 5=tudo.
+        // starIdx: 0=TL 1=TR 2=centro 3=BL 4=BR
+        static const bool kShow[6][5] = {
+            { false, false, false, false, false },  // 0
+            { false, false, true,  false, false },  // 1
+            { true,  true,  false, false, false },  // 2
+            { true,  true,  true,  false, false },  // 3
+            { true,  true,  false, true,  true  },  // 4
+            { true,  true,  true,  true,  true  },  // 5
+        };
+        const bool* show = kShow[qBound(0, stars, 5)];
+        if (stars > 0) {
+            const QString starQss = QStringLiteral(
+                "font-size:7px;color:%1;background:transparent;border:none;").arg(starColor);
+            for (int si = 0; si < 5; ++si) {
+                auto* s = new QLabel(QStringLiteral("★"), cell);
+                s->setObjectName(QStringLiteral("wcpCalStar"));
+                s->setProperty("starIdx", si);
+                s->setAttribute(Qt::WA_TransparentForMouseEvents);
+                s->setAlignment(Qt::AlignCenter);
+                s->setStyleSheet(starQss);
+                s->setGeometry(0, 0, 8, 8); // posição real vem do QEvent::Resize
+                s->setVisible(show[si]);
+            }
+        }
 
         cell->setToolTip(tooltipForDay(key));
         cell->installEventFilter(this); // clique esquerdo → detalhes do dia
@@ -353,6 +377,28 @@ QString WordCounterCalendar::tooltipForDay(const QString& key) const
 
 bool WordCounterCalendar::eventFilter(QObject* watched, QEvent* event)
 {
+    // Reposiciona estrelas absolutas quando a célula é redimensionada pelo grid.
+    if (event->type() == QEvent::Resize) {
+        auto* cell = qobject_cast<QLabel*>(watched);
+        if (cell && cell->objectName() == QLatin1String("wcpCalDay")) {
+            const int W = cell->width(), H = cell->height();
+            const int sz = 8;
+            const QPoint pts[5] = {
+                {1,       1      },               // TL
+                {W-sz-1,  1      },               // TR
+                {(W-sz)/2,(H-sz)/2},              // centro
+                {1,       H-sz-1 },               // BL
+                {W-sz-1,  H-sz-1 },               // BR
+            };
+            for (auto* s : cell->findChildren<QLabel*>(QStringLiteral("wcpCalStar"))) {
+                const int idx = s->property("starIdx").toInt();
+                if (idx >= 0 && idx < 5)
+                    s->setGeometry(pts[idx].x(), pts[idx].y(), sz, sz);
+            }
+        }
+        return false;
+    }
+
     if (event->type() == QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(event);
         auto* lbl = qobject_cast<QLabel*>(watched);

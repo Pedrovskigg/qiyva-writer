@@ -54,6 +54,8 @@ qt_add_executable(mira-writing
     src/WordCountPanel.h
     src/WordCounterCalendar.cpp
     src/WordCounterCalendar.h
+    src/WritingStatsDialog.cpp
+    src/WritingStatsDialog.h
     src/RefMenuPanel.cpp
     src/RefMenuPanel.h
     src/PensarioPanel.cpp

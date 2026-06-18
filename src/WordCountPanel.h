@@ -3,12 +3,14 @@
 #include <QWidget>
 
 class QLabel;
+class QTimer;
 class QToolButton;
 class QPushButton;
 class QFrame;
 class QSpinBox;
 class QComboBox;
 class QProgressBar;
+class QScrollArea;
 class WordCounter;
 class EditorHost;
 class ProjectModel;
@@ -28,6 +30,10 @@ public:
     void setFullMode(bool full);
     bool isFullMode() const { return m_fullMode; }
 
+    // Altura disponível na tela (da base da TopToolbar até a base do container).
+    // Limita a altura do scroll para o conteúdo não passar atrás da toolbar.
+    void setAvailableHeight(int h);
+
 public slots:
     void refresh();
     void refreshFromSettings();
@@ -44,8 +50,14 @@ private slots:
 private:
     void buildUi();
     void updateToggleArrow();
+    void updateScrollSizing();   // ajusta a altura do scroll (min(conteúdo, disponível))
+    void scrollToBottom();       // rola para o fim (calendário visível por padrão)
     QFrame* buildScopeSection();
     QFrame* buildGoalSection();
+    QFrame* buildSprintSection();
+    void startSprint();
+    void stopSprint();
+    void tickSprint();
     void openCompactContextMenu(const QPoint& globalPos);
 
     WordCounter* m_counter;
@@ -53,6 +65,9 @@ private:
     ProjectModel* m_model;
 
     QToolButton* m_toggleButton;
+    QScrollArea* m_scrollArea = nullptr;   // envolve m_body + m_fullBody
+    QWidget* m_scrollContent = nullptr;    // widget interno do scroll
+    int m_maxBodyHeight = 0;               // teto de altura (0 = sem limite)
     QFrame* m_body;          // cards (sempre visível em compact e full)
     QFrame* m_fullBody;      // scope + meta (só visível em full)
     QLabel* m_metaLine;
@@ -93,6 +108,18 @@ private:
     QComboBox* m_folgaEveryCombo = nullptr;
     QLabel* m_folgaStatus = nullptr;
     QLabel* m_folgaLockLine = nullptr;
+
+    // Sprint de escrita
+    QFrame* m_sprintBody = nullptr;
+    QTimer* m_sprintTimer = nullptr;
+    bool m_sprintActive = false;
+    int m_sprintSecondsLeft = 0;
+    int m_sprintStartSession = 0;
+    QLabel* m_sprintTimerLabel = nullptr;
+    QLabel* m_sprintWordsLabel = nullptr;
+    QPushButton* m_sprintActionBtn = nullptr;
+    QSpinBox* m_sprintMinutesSpin = nullptr;
+    QSpinBox* m_sprintWordsSpin = nullptr;
 
     // Calendário
     QToolButton* m_calendarToggleBtn = nullptr;

@@ -19,7 +19,7 @@ public:
     void check();
 
 signals:
-    void updateAvailable(const QString& version, const QString& downloadUrl, const QString& releaseUrl);
+    void updateAvailable(const QString& version, const QString& downloadUrl, const QString& releaseUrl, const QString& releaseNotes);
 
 private:
     void onReplyFinished(QNetworkReply* reply);

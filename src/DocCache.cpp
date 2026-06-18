@@ -82,6 +82,7 @@ void DocCache::clear() {
 }
 
 void DocCache::touchKey(const QString& key) {
+    if (m_maxDocs <= 0) return;
     m_lruOrder.removeAll(key);
     m_lruOrder.prepend(key);
 }

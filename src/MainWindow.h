@@ -172,7 +172,7 @@ private:
 
     // Atualizações (GitHub Releases): checagem silenciosa no startup; se
     // houver versão nova, mostra um toast com botão pra baixar+instalar.
-    void showUpdateToast(const QString& version, const QString& downloadUrl);
+    void showUpdateToast(const QString& version, const QString& downloadUrl, const QString& releaseNotes);
     void positionUpdateToast();
     void startUpdateDownload();
 
@@ -267,9 +267,10 @@ private:
     QTimer  *m_reminderToastTimer = nullptr;
 
     UpdateChecker *m_updateChecker = nullptr;
-    QFrame   *m_updateToast       = nullptr;
-    QLabel   *m_updateToastLabel  = nullptr;
-    QToolButton *m_updateToastBtn = nullptr;
+    QFrame      *m_updateToast         = nullptr;
+    QLabel      *m_updateToastLabel    = nullptr;
+    QLabel      *m_updateToastNotes    = nullptr;
+    QToolButton *m_updateToastBtn      = nullptr;
     QProgressBar *m_updateToastProgress = nullptr;
     QNetworkAccessManager *m_updateNam = nullptr;
     QString m_updateDownloadUrl;

@@ -1667,6 +1667,20 @@ QWidget* DrawerListPanel::makeElementCard(const QString& itemId, const QString& 
         });
         lay->addWidget(statusBtn);
 
+        // Aviso de inconsistência: personagem "ausente" mas ainda detectado em cenas
+        static const QStringList kAbsentStatuses = {
+            QStringLiteral("Morto"), QStringLiteral("Desaparecido")
+        };
+        if (!charStatus.isEmpty() && kAbsentStatuses.contains(charStatus) && presCount > 0) {
+            auto* warnLbl = new QLabel(
+                tr("⚠ Aparece em %1 cena(s) após %2").arg(presCount).arg(charStatus.toLower()), card);
+            warnLbl->setWordWrap(true);
+            warnLbl->setStyleSheet(QStringLiteral(
+                "color: %1; font-size: 9px; font-weight: 700; padding: 2px 0;")
+                .arg(Theme::accentWarning()));
+            lay->addWidget(warnLbl);
+        }
+
         // Botão Último local
         auto* locBtn = new QPushButton(card);
         locBtn->setObjectName(QStringLiteral("pickerOption"));

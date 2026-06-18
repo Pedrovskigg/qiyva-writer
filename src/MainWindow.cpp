@@ -356,8 +356,8 @@ MainWindow::MainWindow(QWidget *parent)
     // após o startup pra não competir com o carregamento do projeto.
     m_updateChecker = new UpdateChecker(this);
     connect(m_updateChecker, &UpdateChecker::updateAvailable, this,
-            [this](const QString& version, const QString& downloadUrl, const QString&) {
-                showUpdateToast(version, downloadUrl);
+            [this](const QString& version, const QString& downloadUrl, const QString&, const QString& releaseNotes) {
+                showUpdateToast(version, downloadUrl, releaseNotes);
             });
     QTimer::singleShot(3000, this, [this]() {
         if (m_updateChecker) m_updateChecker->check();
@@ -3357,7 +3357,36 @@ void MainWindow::positionReminderToast()
         r.bottom() - m_reminderToast->height() - margin);
 }
 
-void MainWindow::showUpdateToast(const QString& version, const QString& downloadUrl)
+static QString formatUpdateNotes(const QString& markdown, int maxChars = 300)
+{
+    QStringList out;
+    for (const QString& raw : markdown.split(QLatin1Char('\n'))) {
+        QString line = raw.trimmed();
+        if (line.startsWith(QLatin1Char('#'))) continue; // pula headings
+        // Bullets: "- " ou "* " → "•"
+        if ((line.startsWith(QStringLiteral("- ")) || line.startsWith(QStringLiteral("* "))))
+            line = QStringLiteral("• ") + line.mid(2);
+        // Remove marcadores **bold** e *italic*
+        static const QRegularExpression boldRe(QStringLiteral("\\*{1,3}([^*\\n]+)\\*{1,3}"));
+        line.replace(boldRe, QStringLiteral("\\1"));
+        out.append(line);
+    }
+    while (!out.isEmpty() && out.first().isEmpty()) out.removeFirst();
+    while (!out.isEmpty() && out.last().isEmpty())  out.removeLast();
+
+    QString text = out.join(QLatin1Char('\n'));
+    // Colapsa 3+ quebras de linha em 2
+    static const QRegularExpression blankRe(QStringLiteral("\\n{3,}"));
+    text.replace(blankRe, QStringLiteral("\n\n"));
+    text = text.trimmed();
+
+    if (text.length() <= maxChars) return text;
+    int pos = text.lastIndexOf(QLatin1Char('\n'), maxChars);
+    if (pos < maxChars / 2) pos = maxChars;
+    return text.left(pos).trimmed() + QStringLiteral("\n…");
+}
+
+void MainWindow::showUpdateToast(const QString& version, const QString& downloadUrl, const QString& releaseNotes)
 {
     m_updateVersion = version;
     m_updateDownloadUrl = downloadUrl;
@@ -3391,6 +3420,12 @@ void MainWindow::showUpdateToast(const QString& version, const QString& download
         topRow->addWidget(closeBtn);
         root->addLayout(topRow);
 
+        m_updateToastNotes = new QLabel(m_updateToast);
+        m_updateToastNotes->setObjectName(QStringLiteral("utNotes"));
+        m_updateToastNotes->setWordWrap(true);
+        m_updateToastNotes->hide();
+        root->addWidget(m_updateToastNotes);
+
         m_updateToastProgress = new QProgressBar(m_updateToast);
         m_updateToastProgress->setObjectName(QStringLiteral("utProgress"));
         m_updateToastProgress->setRange(0, 100);
@@ -3413,6 +3448,7 @@ void MainWindow::showUpdateToast(const QString& version, const QString& download
         "  background: %1; border: 1px solid %2; border-radius: 10px;"
         "}"
         "QLabel#utTitle { color: %3; font-size: 13px; font-weight: 600; }"
+        "QLabel#utNotes { color: %4; font-size: 11px; }"
         "QToolButton#utClose {"
         "  background: transparent; border: none;"
         "  color: %4; font-size: 16px; font-weight: 300;"
@@ -3436,6 +3472,15 @@ void MainWindow::showUpdateToast(const QString& version, const QString& download
          Theme::accentInfo()));
 
     m_updateToastLabel->setText(tr("Nova versão disponível: %1").arg(version));
+
+    const QString notes = formatUpdateNotes(releaseNotes);
+    if (!notes.isEmpty()) {
+        m_updateToastNotes->setText(notes);
+        m_updateToastNotes->show();
+    } else {
+        m_updateToastNotes->hide();
+    }
+
     m_updateToastBtn->setText(tr("Baixar e instalar"));
     m_updateToastBtn->setEnabled(true);
     m_updateToastProgress->setValue(0);
@@ -3745,10 +3790,24 @@ void MainWindow::positionWordCountPanel()
 {
     if (!wordCountPanel || !wordCountPanel->parentWidget()) return;
     QWidget* parent = wordCountPanel->parentWidget();
+
+    // Altura disponível entre a base da TopToolbar e a base do container. O painel
+    // (scroll interno) é limitado a isso, então o conteúdo nunca passa atrás da
+    // toolbar — quando é maior, rola (e abre já mostrando o calendário no fim).
+    int topSafe = 0;
+    if (toolbarHolder && toolbarHolder->isVisible()) {
+        topSafe = parent->mapFromGlobal(
+            toolbarHolder->mapToGlobal(QPoint(0, toolbarHolder->height()))).y();
+    }
+    const int bottomMargin = 10;
+    const int toggleH = 18;   // altura do botão ▼ que fica fora do scroll
+    const int avail = parent->height() - topSafe - bottomMargin - toggleH;
+    wordCountPanel->setAvailableHeight(avail);
+
     wordCountPanel->adjustSize();
     const int leftBarOffset = LeftBar::barWidth() + 10 + 10; // largura LeftBar + spacing do layout + margem
     const int x = leftBarOffset;
-    const int y = parent->height() - wordCountPanel->height() - 10;
+    const int y = parent->height() - wordCountPanel->height() - bottomMargin;
     wordCountPanel->move(x, y);
 }
 
