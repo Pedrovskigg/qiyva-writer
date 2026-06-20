@@ -4820,6 +4820,11 @@ void MainWindow::showCharacterSheet(const QString& itemId)
     if (manuscriptPanel && manuscriptPanel->isVisible()) manuscriptPanel->raise();
     if (toolbarHolder) toolbarHolder->raise();
     if (externalScrollBar) externalScrollBar->hide();
+    // O contador fica no canto, sobre tudo — precisa subir acima da ficha também.
+    if (wordCountPanel && wordCountPanel->isVisible()) {
+        positionWordCountPanel();
+        wordCountPanel->raise();
+    }
 
     // Lembra a ficha como último doc do projeto (a ficha não passa pelo
     // viewMode do editor, então registra aqui pra o restore reabrir nela).
