@@ -1,13 +1,16 @@
 #include "CharacterSheetPanel.h"
 
+#include "EditorLayout.h"
 #include "ElementsStore.h"
 #include "Theme.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QBuffer>
 #include <QByteArray>
+#include <QCursor>
 #include <QEvent>
 #include <QFileDialog>
+#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QImage>
 #include <QImageReader>
@@ -23,6 +26,9 @@
 #include <QVBoxLayout>
 
 namespace {
+
+constexpr int kPhotoW = 150;
+constexpr int kPhotoH = 188;
 
 // Carrega imagem do disco como data URL JPEG quadrado 400×400 (crop central).
 QString loadImageAsDataUrl(const QString& path) {
@@ -59,6 +65,7 @@ QToolButton* makeFieldBtn(const QString& glyph, const QString& tip) {
     b->setAutoRaise(true);
     b->setCursor(Qt::PointingHandCursor);
     b->setObjectName(QStringLiteral("sheetFieldBtn"));
+    b->setVisible(false);   // hover-reveal
     return b;
 }
 
@@ -82,32 +89,31 @@ CharacterSheetPanel::CharacterSheetPanel(ProjectModel* model, ElementsStore* ele
     m_scroll->setWidgetResizable(true);
     m_scroll->setFrameShape(QFrame::NoFrame);
     m_scroll->setObjectName(QStringLiteral("sheetScroll"));
+    m_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     outer->addWidget(m_scroll);
 
     setStyleSheet(QStringLiteral(
-        "#characterSheetPanel, #sheetScroll, #sheetContent { background: %1; }"
+        "#characterSheetPanel, #sheetScroll, #sheetOuter { background: transparent; }"
         "#sheetScroll { border: none; }"
-        "QLabel#sheetName  { font-size: 26px; font-weight: 700; color: %2; }"
-        "QLabel#sheetAlias { font-size: 14px; font-style: italic; color: %3; }"
-        "QLabel#sheetPhoto { background: %4; border: 1px solid %5; border-radius: 10px; color: %3; }"
+        "#sheetPage { background: %1; }"
+        "QLabel#sheetName  { font-size: 22px; font-weight: 700; color: %2; }"
+        "QLabel#sheetAlias { font-size: 13px; font-style: italic; color: %3; }"
+        "QLabel#sheetPhoto { background: %4; border: 1px solid %5; border-radius: 6px; color: %3; }"
         "QLineEdit#sheetLabel { border: none; background: transparent; font-weight: 700; "
-        "  color: %3; padding: 2px 0; }"
-        "QLineEdit#sheetData { border: none; border-bottom: 1px solid transparent; "
-        "  background: transparent; color: %2; padding: 4px 2px; }"
-        "QLineEdit#sheetData:hover { border-bottom: 1px solid %5; }"
-        "QLineEdit#sheetData:focus { border-bottom: 1px solid %6; background: %7; }"
-        "QTextEdit#sheetText { border: none; background: transparent; color: %2; padding: 2px; }"
-        "QTextEdit#sheetText:hover, QTextEdit#sheetText:focus { background: %7; "
-        "  border-radius: 6px; }"
-        "QToolButton#sheetFieldBtn { border: none; color: %3; font-size: 14px; "
-        "  padding: 0 4px; }"
+        "  color: %2; padding: 0; }"
+        "QLineEdit#sheetData { border: none; background: transparent; color: %2; padding: 1px 0; }"
+        "QLineEdit#sheetData:hover, QLineEdit#sheetData:focus { background: %6; border-radius: 4px; }"
+        "QTextEdit#sheetText { border: none; background: transparent; color: %2; padding: 0; }"
+        "QTextEdit#sheetText:hover, QTextEdit#sheetText:focus { background: %6; border-radius: 4px; }"
+        "QToolButton#sheetFieldBtn { border: none; color: %3; font-size: 13px; padding: 0 3px; }"
         "QToolButton#sheetFieldBtn:hover { color: %2; }"
-        "QPushButton#sheetGhostBtn { border: 1px solid %5; border-radius: 6px; "
-        "  color: %3; padding: 5px 12px; background: transparent; }"
-        "QPushButton#sheetGhostBtn:hover { color: %2; border-color: %6; background: %7; }"
-    ).arg(Theme::appBackground(), Theme::textPrimary(), Theme::textMuted(),
-          Theme::inputBackground(), Theme::subtleBorder(), Theme::focusBorder(),
-          Theme::hoverOverlay()));
+        "QToolButton#sheetGhostTool { border: none; color: %3; font-size: 12px; padding: 2px 6px; }"
+        "QToolButton#sheetGhostTool:hover { color: %2; }"
+        "QPushButton#sheetGhostBtn { border: 1px dashed %5; border-radius: 5px; "
+        "  color: %3; padding: 4px 12px; background: transparent; }"
+        "QPushButton#sheetGhostBtn:hover { color: %2; border-color: %2; }"
+    ).arg(Theme::editorBackground(), Theme::editorTextColor(), Theme::textMuted(),
+          Theme::inputBackground(), Theme::subtleBorder(), Theme::hoverOverlay()));
 }
 
 void CharacterSheetPanel::openItem(const QString& itemId)
@@ -209,13 +215,17 @@ void CharacterSheetPanel::refreshPhoto()
         QPixmap pm = pixmapFromDataUrl(e->image);
         if (!pm.isNull()) {
             m_photo->setText(QString());
-            m_photo->setPixmap(pm.scaled(m_photo->size(),
-                Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+            QPixmap scaled = pm.scaled(m_photo->size(),
+                Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+            // Crop central pra preencher o retrato sem distorcer.
+            const int dx = (scaled.width() - m_photo->width()) / 2;
+            const int dy = (scaled.height() - m_photo->height()) / 2;
+            m_photo->setPixmap(scaled.copy(dx, dy, m_photo->width(), m_photo->height()));
             return;
         }
     }
     m_photo->setPixmap(QPixmap());
-    m_photo->setText(tr("+ foto"));
+    m_photo->setText(tr("＋ foto"));
 }
 
 QWidget* CharacterSheetPanel::buildColumn(const QString& side)
@@ -223,7 +233,7 @@ QWidget* CharacterSheetPanel::buildColumn(const QString& side)
     auto* col = new QWidget;
     auto* lay = new QVBoxLayout(col);
     lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(18);
+    lay->setSpacing(11);
     for (const auto& f : m_sheet.fields) {
         if (!side.isEmpty() && f.column != side) continue;
         lay->addWidget(buildFieldWidget(f));
@@ -236,15 +246,18 @@ QWidget* CharacterSheetPanel::buildFieldWidget(const SheetField& f)
 {
     const QString id = f.id;
     auto* box = new QWidget;
+    box->setProperty("fieldBox", true);
+    box->installEventFilter(this);
     auto* v = new QVBoxLayout(box);
     v->setContentsMargins(0, 0, 0, 0);
-    v->setSpacing(2);
+    v->setSpacing(1);
 
-    // Linha do rótulo + controles (mover coluna / remover)
+    // Linha do rótulo + controles (hover-reveal): mover coluna / remover.
     auto* head = new QHBoxLayout;
     head->setSpacing(2);
     auto* label = new QLineEdit(f.label);
     label->setObjectName(QStringLiteral("sheetLabel"));
+    label->setCursorPosition(0);
     connect(label, &QLineEdit::editingFinished, this, [this, id, label]() {
         for (auto& ff : m_sheet.fields) if (ff.id == id) { ff.label = label->text(); break; }
         scheduleSave();
@@ -272,12 +285,11 @@ QWidget* CharacterSheetPanel::buildFieldWidget(const SheetField& f)
         te->setPlaceholderText(tr("Escreva aqui…"));
         te->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         te->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        // Auto-altura: acompanha o tamanho do documento (inclui quebra por largura).
         auto* doc = te->document();
+        doc->setDocumentMargin(0);
         connect(doc->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged,
                 te, [te](const QSizeF& s) {
-            const int h = int(s.height()) + 14;
-            te->setFixedHeight(qMax(44, h));
+            te->setFixedHeight(qMax(24, int(s.height()) + 6));
         });
         connect(te, &QTextEdit::textChanged, this, [this, id, te]() {
             setFieldValue(id, te->toHtml());
@@ -299,30 +311,48 @@ QWidget* CharacterSheetPanel::buildFieldWidget(const SheetField& f)
 
 void CharacterSheetPanel::rebuild()
 {
-    m_content = new QWidget;
-    m_content->setObjectName(QStringLiteral("sheetContent"));
-    auto* root = new QVBoxLayout(m_content);
-    root->setContentsMargins(48, 28, 48, 40);
-    root->setSpacing(22);
+    // Outer transparente que centraliza a "folha" (página) horizontalmente.
+    auto* outer = new QWidget;
+    outer->setObjectName(QStringLiteral("sheetOuter"));
+    auto* outerLay = new QHBoxLayout(outer);
+    outerLay->setContentsMargins(0, 0, 0, 0);
 
-    // Barra superior: alternar 1/2 colunas.
+    // A folha: mesma largura da página do editor, cor de página, sombra.
+    auto* page = new QWidget;
+    page->setObjectName(QStringLiteral("sheetPage"));
+    page->setFixedWidth(EditorLayout::pageWidth());
+    if (Theme::pageShadowEnabled()) {
+        auto* shadow = new QGraphicsDropShadowEffect(page);
+        shadow->setBlurRadius(Theme::pageShadowRadius());
+        shadow->setOffset(0, Theme::pageShadowOffset());
+        shadow->setColor(QColor(0, 0, 0, 140));
+        page->setGraphicsEffect(shadow);
+    }
+    const int hm = qMax(28, EditorLayout::horizontalMargin());
+    const int vm = qMax(28, EditorLayout::verticalMargin());
+    auto* root = new QVBoxLayout(page);
+    root->setContentsMargins(hm, vm, hm, vm);
+    root->setSpacing(14);
+
+    // Barra superior discreta: alternar 1/2 colunas.
     auto* topBar = new QHBoxLayout;
     topBar->addStretch();
-    auto* colBtn = new QPushButton(m_sheet.columns == 2 ? tr("1 coluna") : tr("2 colunas"));
-    colBtn->setObjectName(QStringLiteral("sheetGhostBtn"));
+    auto* colBtn = new QToolButton;
+    colBtn->setObjectName(QStringLiteral("sheetGhostTool"));
+    colBtn->setText(m_sheet.columns == 2 ? tr("▯ 1 coluna") : tr("▮▮ 2 colunas"));
     colBtn->setCursor(Qt::PointingHandCursor);
-    connect(colBtn, &QPushButton::clicked, this, &CharacterSheetPanel::toggleColumns);
+    connect(colBtn, &QToolButton::clicked, this, &CharacterSheetPanel::toggleColumns);
     topBar->addWidget(colBtn);
     root->addLayout(topBar);
 
-    // Cabeçalho: foto + nome + apelido (do Element vinculado).
+    // Cabeçalho: foto grande + nome + apelido (do Element vinculado).
     const Element* e = (!m_elementId.isEmpty() && m_elements)
         ? m_elements->findElement(m_elementId) : nullptr;
     auto* header = new QHBoxLayout;
-    header->setSpacing(22);
+    header->setSpacing(16);
     m_photo = new QLabel;
     m_photo->setObjectName(QStringLiteral("sheetPhoto"));
-    m_photo->setFixedSize(132, 132);
+    m_photo->setFixedSize(kPhotoW, kPhotoH);
     m_photo->setAlignment(Qt::AlignCenter);
     m_photo->setCursor(Qt::PointingHandCursor);
     m_photo->installEventFilter(this);
@@ -330,24 +360,25 @@ void CharacterSheetPanel::rebuild()
     header->addWidget(m_photo, 0, Qt::AlignTop);
 
     auto* nameCol = new QVBoxLayout;
-    nameCol->setSpacing(4);
-    nameCol->addSpacing(8);
+    nameCol->setSpacing(2);
     auto* nameLbl = new QLabel(e ? e->name : tr("Personagem"));
     nameLbl->setObjectName(QStringLiteral("sheetName"));
+    nameLbl->setWordWrap(true);
     nameCol->addWidget(nameLbl);
     if (e && !e->aliases.isEmpty()) {
         auto* aliasLbl = new QLabel(e->aliases.join(QStringLiteral(", ")));
         aliasLbl->setObjectName(QStringLiteral("sheetAlias"));
+        aliasLbl->setWordWrap(true);
         nameCol->addWidget(aliasLbl);
     }
     nameCol->addStretch();
     header->addLayout(nameCol, 1);
     root->addLayout(header);
 
-    // Corpo: 1 ou 2 colunas.
+    // Corpo: 1 ou 2 colunas (próximas).
     if (m_sheet.columns == 2) {
         auto* cols = new QHBoxLayout;
-        cols->setSpacing(40);
+        cols->setSpacing(26);
         cols->addWidget(buildColumn(QStringLiteral("left")), 1);
         cols->addWidget(buildColumn(QStringLiteral("right")), 1);
         root->addLayout(cols);
@@ -355,10 +386,10 @@ void CharacterSheetPanel::rebuild()
         root->addWidget(buildColumn(QString()));
     }
 
-    // Rodapé: adicionar campos.
+    // Rodapé: adicionar campos (discreto).
     auto* addBar = new QHBoxLayout;
-    auto* addData = new QPushButton(tr("+ Dado"));
-    auto* addText = new QPushButton(tr("+ Texto"));
+    auto* addData = new QPushButton(tr("＋ Dado"));
+    auto* addText = new QPushButton(tr("＋ Texto"));
     addData->setObjectName(QStringLiteral("sheetGhostBtn"));
     addText->setObjectName(QStringLiteral("sheetGhostBtn"));
     addData->setCursor(Qt::PointingHandCursor);
@@ -368,9 +399,15 @@ void CharacterSheetPanel::rebuild()
     addBar->addWidget(addData);
     addBar->addWidget(addText);
     addBar->addStretch();
+    root->addSpacing(4);
     root->addLayout(addBar);
     root->addStretch();
 
+    outerLay->addStretch();
+    outerLay->addWidget(page, 0, Qt::AlignTop);
+    outerLay->addStretch();
+
+    m_content = outer;
     m_scroll->setWidget(m_content);  // substitui e destrói o conteúdo anterior
 }
 
@@ -379,6 +416,18 @@ bool CharacterSheetPanel::eventFilter(QObject* watched, QEvent* event)
     if (watched == m_photo && event->type() == QEvent::MouseButtonRelease) {
         auto* me = static_cast<QMouseEvent*>(event);
         if (me->button() == Qt::LeftButton) { pickPhoto(); return true; }
+        return QWidget::eventFilter(watched, event);
+    }
+    // Hover-reveal dos botões de cada campo.
+    auto* box = qobject_cast<QWidget*>(watched);
+    if (box && box->property("fieldBox").toBool()) {
+        if (event->type() == QEvent::Enter) {
+            for (auto* b : box->findChildren<QToolButton*>()) b->setVisible(true);
+        } else if (event->type() == QEvent::Leave) {
+            // Ignora "leave" causado por entrar num filho (lineedit/textedit).
+            if (!box->rect().contains(box->mapFromGlobal(QCursor::pos())))
+                for (auto* b : box->findChildren<QToolButton*>()) b->setVisible(false);
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
