@@ -1594,11 +1594,19 @@ void RefMenuPanel::rescalePreviewImages()
     m_previewImagesScroll->setFixedHeight(qBound(1, totalH, 360));
 }
 
+void RefMenuPanel::setEditorFontFamily(const QString& family)
+{
+    if (m_editorFontFamily == family) return;
+    m_editorFontFamily = family;
+    applyPreviewFont();
+}
+
 void RefMenuPanel::applyPreviewFont()
 {
     if (!m_preview) return;
     QFont f = m_preview->font();
     f.setPointSize(m_previewFontPt);
+    if (!m_editorFontFamily.isEmpty()) f.setFamily(m_editorFontFamily);
     m_preview->setFont(f);
 
     // HTML salvo do Mira 1 vem com font-size inline em cada bloco (toHtml do
@@ -1659,15 +1667,14 @@ QString RefMenuPanel::resolveDocHtml(const QString& key) const
         const DrawerItem* item = m_model->findDrawerItem(itemId);
         if (!item) return QString();
         if (item->isSheet) {
-            QString nm = item->title, al;
+            // Nome/apelido já aparecem no cabeçalho do preview — passa vazio pra não
+            // duplicar. A foto entra como <img> e o RefMenu a extrai pro topo.
+            QString img;
             if (m_elements && !item->elementId.isEmpty()) {
-                if (const Element* e = m_elements->findElement(item->elementId)) {
-                    if (!e->name.isEmpty()) nm = e->name;
-                    al = e->aliases.join(QStringLiteral(", "));
-                }
+                if (const Element* e = m_elements->findElement(item->elementId))
+                    img = e->image;
             }
-            // Foto é mostrada à parte pelo RefMenu (imageForItem) — não duplica aqui.
-            return ProjectModel::characterSheetToHtml(item->sheet, nm, al, QString());
+            return ProjectModel::characterSheetToHtml(item->sheet, QString(), QString(), img);
         }
         if (item->hasInlineHtml) return item->html;
         if (!item->file.isEmpty() && !m_projectRoot.isEmpty()) {

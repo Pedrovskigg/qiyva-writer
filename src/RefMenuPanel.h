@@ -40,6 +40,9 @@ public:
                  ElementsStore* elements, QWidget* parent = nullptr);
 
     void setProjectRoot(const QString& root);
+    // Família da fonte de escrita do editor — usada na preview (ex.: fichas, que
+    // não trazem font-family embutida no html).
+    void setEditorFontFamily(const QString& family);
 
     void togglePanel();
     void openPanel();
@@ -157,6 +160,7 @@ private:
     QString m_editingKey; // chave DocCache do doc em edição (vazio = nenhum)
     bool m_navHidden = false;
     int m_previewFontPt = 13;
+    QString m_editorFontFamily;   // família da fonte de escrita (preview de fichas)
 
     // UI - root
     QWidget* m_frame = nullptr;          // filho centralizado deixando 8px de borda

@@ -1357,6 +1357,7 @@ void MainWindow::setupEditor()
     // Painel flutuante de Referência — drag/resize livres, geometria persistida em QSettings.
     refMenuPanel = new RefMenuPanel(projectModel, editorHost, docCache, elementsStore, container);
     refMenuPanel->setProjectRoot(projectRoot);
+    refMenuPanel->setEditorFontFamily(currentFontFamily);
     refMenuPanel->raise();
     connect(refMenuPanel, &RefMenuPanel::geometryChanged, this, &MainWindow::positionWordCountPanel);
     connect(refMenuPanel, &RefMenuPanel::selectedKeyChanged, this, &MainWindow::updateDocCachePinnedKeys);
@@ -2287,6 +2288,7 @@ void MainWindow::setAvailableFontFamilies(const QStringList &families)
     currentFontFamily = preferredDefault;
     toolbar->setFontFamilies(families, currentFontFamily);
     applyEditorStyle();
+    if (refMenuPanel) refMenuPanel->setEditorFontFamily(currentFontFamily);
 }
 
 void MainWindow::updateDocCachePinnedKeys()
@@ -2440,6 +2442,7 @@ void MainWindow::setFontFamily(const QString &family)
     applyEditorStyle();
     if (characterSheetPanel && characterSheetPanel->isVisible())
         characterSheetPanel->setContentFont(QFont(currentFontFamily, currentFontSize));
+    if (refMenuPanel) refMenuPanel->setEditorFontFamily(currentFontFamily);
 }
 
 void MainWindow::setFontSize(int pt)
