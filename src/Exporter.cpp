@@ -152,6 +152,8 @@ QString Exporter::chapterHtmlPrimary(const Chapter& ch) const {
 }
 
 QString Exporter::itemHtml(const DrawerItem& it) const {
+    if (it.isSheet)
+        return ProjectModel::characterSheetToHtml(it.sheet, it.title, QString(), QString());
     if (it.hasInlineHtml) return it.html;
     if (!it.file.isEmpty()) {
         bool ok = false;

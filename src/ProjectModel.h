@@ -244,6 +244,11 @@ public:
     // Ficha padrão de personagem: campos básicos (esquerda) + blocos narrativos (direita).
     static CharacterSheet defaultCharacterSheet();
 
+    // Renderiza uma ficha como HTML legível (para RefMenu, exportação, busca).
+    // name/aliases/imageDataUrl podem vir vazios; campos seguem a ordem da ficha.
+    static QString characterSheetToHtml(const CharacterSheet& sheet, const QString& name,
+                                        const QString& aliases, const QString& imageDataUrl);
+
 signals:
     void projectNameChanged();
     void manuscriptsChanged();

@@ -1658,6 +1658,17 @@ QString RefMenuPanel::resolveDocHtml(const QString& key) const
         if (m_cache && m_cache->has(cacheKey)) return m_cache->get(cacheKey);
         const DrawerItem* item = m_model->findDrawerItem(itemId);
         if (!item) return QString();
+        if (item->isSheet) {
+            QString nm = item->title, al;
+            if (m_elements && !item->elementId.isEmpty()) {
+                if (const Element* e = m_elements->findElement(item->elementId)) {
+                    if (!e->name.isEmpty()) nm = e->name;
+                    al = e->aliases.join(QStringLiteral(", "));
+                }
+            }
+            // Foto é mostrada à parte pelo RefMenu (imageForItem) — não duplica aqui.
+            return ProjectModel::characterSheetToHtml(item->sheet, nm, al, QString());
+        }
         if (item->hasInlineHtml) return item->html;
         if (!item->file.isEmpty() && !m_projectRoot.isEmpty()) {
             bool ok = false;

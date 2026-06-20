@@ -1401,6 +1401,11 @@ void MainWindow::setupEditor()
     globalSearchPanel = new GlobalSearchPanel(projectModel, docCache, projectRoot, container);
     connect(globalSearchPanel, &GlobalSearchPanel::openRequested, this,
             [this](EditorHost::ViewMode vm, QString query) {
+        // Item que é Ficha: abre o painel da ficha, não o editor de texto vazio.
+        if (vm.type == EditorHost::DrawerDoc && projectModel) {
+            const DrawerItem* item = projectModel->findDrawerItem(vm.itemId);
+            if (item && item->isSheet) { showCharacterSheet(vm.itemId); return; }
+        }
         if (editorHost) editorHost->setViewMode(vm);
         // Após carregar, dispara FindBar com a query pra mostrar onde está.
         if (!query.isEmpty() && findBar) {
@@ -3766,6 +3771,11 @@ void MainWindow::restoreLastDocFor(const QString& root)
     vm.itemId       = s.value(QStringLiteral("itemId")).toString();
     s.endGroup();
     if (vm.type == EditorHost::Disabled) return;
+    // Ficha: restaura no painel da ficha, não no editor de texto.
+    if (vm.type == EditorHost::DrawerDoc && projectModel) {
+        const DrawerItem* item = projectModel->findDrawerItem(vm.itemId);
+        if (item && item->isSheet) { showCharacterSheet(vm.itemId); return; }
+    }
     // EditorHost valida IDs e cai pra Disabled se não conseguir resolver — ok.
     editorHost->setViewMode(vm);
 }
@@ -4801,6 +4811,19 @@ void MainWindow::showCharacterSheet(const QString& itemId)
     if (manuscriptPanel && manuscriptPanel->isVisible()) manuscriptPanel->raise();
     if (toolbarHolder) toolbarHolder->raise();
     if (externalScrollBar) externalScrollBar->hide();
+
+    // Lembra a ficha como último doc do projeto (a ficha não passa pelo
+    // viewMode do editor, então registra aqui pra o restore reabrir nela).
+    if (!projectRoot.isEmpty()) {
+        QSettings s;
+        s.beginGroup(lastDocGroupFor(projectRoot));
+        s.setValue(QStringLiteral("type"), int(EditorHost::DrawerDoc));
+        s.setValue(QStringLiteral("manuscriptId"), QString());
+        s.setValue(QStringLiteral("chapterId"), QString());
+        s.setValue(QStringLiteral("sceneIndex"), -1);
+        s.setValue(QStringLiteral("itemId"), itemId);
+        s.endGroup();
+    }
 }
 
 void MainWindow::hideCharacterSheet()

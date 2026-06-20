@@ -1411,6 +1411,37 @@ QString ProjectModel::chapterDefaultFile(const QString& manuscriptId, const QStr
     return QStringLiteral("content/chapters/ch_%1.html").arg(chapterId);
 }
 
+QString ProjectModel::characterSheetToHtml(const CharacterSheet& sheet, const QString& name,
+                                           const QString& aliases, const QString& imageDataUrl) {
+    // Extrai o conteúdo de <body> de um html completo (o QTextEdit gera doc inteiro).
+    auto innerBody = [](const QString& full) -> QString {
+        const int bs = full.indexOf(QLatin1String("<body"), 0, Qt::CaseInsensitive);
+        if (bs < 0) return full;
+        const int gt = full.indexOf(QLatin1Char('>'), bs);
+        const int be = full.lastIndexOf(QLatin1String("</body>"), -1, Qt::CaseInsensitive);
+        if (gt < 0 || be < 0) return full;
+        return full.mid(gt + 1, be - gt - 1);
+    };
+    QString h;
+    if (!imageDataUrl.isEmpty())
+        h += QStringLiteral("<p><img src=\"%1\" width=\"210\"></p>").arg(imageDataUrl);
+    if (!name.isEmpty())
+        h += QStringLiteral("<h2>%1</h2>").arg(name.toHtmlEscaped());
+    if (!aliases.isEmpty())
+        h += QStringLiteral("<p><i>%1</i></p>").arg(aliases.toHtmlEscaped());
+    for (const SheetField& f : sheet.fields) {
+        const QString label = f.label.toHtmlEscaped();
+        if (f.kind == QStringLiteral("data")) {
+            h += QStringLiteral("<p><b>%1:</b> %2</p>").arg(label, f.value.toHtmlEscaped());
+        } else {
+            h += QStringLiteral("<p><b>%1</b></p>").arg(label);
+            const QString body = innerBody(f.value).trimmed();
+            h += body.isEmpty() ? QStringLiteral("<p></p>") : body;
+        }
+    }
+    return h;
+}
+
 CharacterSheet ProjectModel::defaultCharacterSheet() {
     CharacterSheet s;
     s.columns = 2;

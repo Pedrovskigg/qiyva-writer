@@ -285,7 +285,9 @@ void GlobalSearchPanel::runSearch()
             const bool titleHit = title.toLower().contains(needle);
             bool contentHit = false;
             if (!titleHit) {
-                const QString html = readItemHtml(d.key, it.id, it.file);
+                const QString html = it.isSheet
+                    ? ProjectModel::characterSheetToHtml(it.sheet, it.title, QString(), QString())
+                    : readItemHtml(d.key, it.id, it.file);
                 if (!html.isEmpty()) {
                     contentHit = htmlToPlainText(html).toLower().contains(needle);
                 }
