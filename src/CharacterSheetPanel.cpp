@@ -395,9 +395,20 @@ void CharacterSheetPanel::rebuild()
     root->setContentsMargins(hm, vm, hm, vm);
     root->setSpacing(24);
 
-    // Barra superior discreta: alternar 1/2 colunas.
+    // Barra superior: adicionar campos + alternar 1/2 colunas.
     auto* topBar = new QHBoxLayout;
+    topBar->setSpacing(8);
     topBar->addStretch();
+    auto* addData = new QPushButton(tr("＋ Dado"));
+    auto* addText = new QPushButton(tr("＋ Texto"));
+    addData->setObjectName(QStringLiteral("sheetGhostBtn"));
+    addText->setObjectName(QStringLiteral("sheetGhostBtn"));
+    addData->setCursor(Qt::PointingHandCursor);
+    addText->setCursor(Qt::PointingHandCursor);
+    connect(addData, &QPushButton::clicked, this, [this]() { addField(QStringLiteral("data")); });
+    connect(addText, &QPushButton::clicked, this, [this]() { addField(QStringLiteral("text")); });
+    topBar->addWidget(addData);
+    topBar->addWidget(addText);
     auto* colBtn = new QToolButton;
     colBtn->setObjectName(QStringLiteral("sheetGhostTool"));
     colBtn->setText(m_sheet.columns == 2 ? tr("1 coluna") : tr("2 colunas"));
@@ -442,21 +453,6 @@ void CharacterSheetPanel::rebuild()
         root->addWidget(colW);
     }
 
-    // Rodapé: adicionar campos (discreto).
-    auto* addBar = new QHBoxLayout;
-    auto* addData = new QPushButton(tr("＋ Dado"));
-    auto* addText = new QPushButton(tr("＋ Texto"));
-    addData->setObjectName(QStringLiteral("sheetGhostBtn"));
-    addText->setObjectName(QStringLiteral("sheetGhostBtn"));
-    addData->setCursor(Qt::PointingHandCursor);
-    addText->setCursor(Qt::PointingHandCursor);
-    connect(addData, &QPushButton::clicked, this, [this]() { addField(QStringLiteral("data")); });
-    connect(addText, &QPushButton::clicked, this, [this]() { addField(QStringLiteral("text")); });
-    addBar->addWidget(addData);
-    addBar->addWidget(addText);
-    addBar->addStretch();
-    root->addSpacing(8);
-    root->addLayout(addBar);
     root->addStretch();   // empurra conteúdo pro topo; a folha estica até o rodapé da página
 
     outerLay->addStretch();
