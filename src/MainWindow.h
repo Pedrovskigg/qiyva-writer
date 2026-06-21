@@ -69,6 +69,7 @@ class GroupsPanel;
 class LousaPanel;
 class TimelinePanel;
 class CharacterSheetPanel;
+class MentionPopup;
 class UpdateChecker;
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -268,6 +269,7 @@ private:
     LousaPanel *lousaPanel = nullptr;
     TimelinePanel *timelinePanel = nullptr;
     CharacterSheetPanel *characterSheetPanel = nullptr;
+    MentionPopup *mentionPopup = nullptr;
     QFrame  *m_reminderToast      = nullptr;
     QLabel  *m_reminderToastTitle = nullptr;
     QLabel  *m_reminderToastBody  = nullptr;

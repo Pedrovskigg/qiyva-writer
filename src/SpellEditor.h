@@ -25,8 +25,14 @@ signals:
     // contexto. word = texto selecionado (ou WordUnderCursor), pos = global.
     void addToGlossaryRequested(QString word, QPoint globalPos);
 
+    // Ctrl+clique sobre um link de referência (menção @ ou nome do Codex).
+    // href no formato "ref:<drawerKey>:<itemId>".
+    void refActivated(QString href);
+
 protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
 
 private:
     SpellChecker* m_checker = nullptr;

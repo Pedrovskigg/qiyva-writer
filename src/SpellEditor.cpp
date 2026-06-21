@@ -6,7 +6,14 @@
 #include <QContextMenuEvent>
 #include <QFont>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QTextCursor>
+
+namespace {
+bool isRefHref(const QString& href) {
+    return href.startsWith(QStringLiteral("ref:"));
+}
+}
 
 namespace {
 constexpr int kMaxSuggestions = 6;
@@ -109,4 +116,28 @@ void SpellEditor::contextMenuEvent(QContextMenuEvent* event)
 
     menu->exec(event->globalPos());
     delete menu;
+}
+
+void SpellEditor::mousePressEvent(QMouseEvent* event)
+{
+    // Ctrl+clique num link de referência abre o doc no RefMenu (não posiciona cursor).
+    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier)) {
+        const QString href = anchorAt(event->pos());
+        if (isRefHref(href)) {
+            emit refActivated(href);
+            event->accept();
+            return;
+        }
+    }
+    QTextEdit::mousePressEvent(event);
+}
+
+void SpellEditor::mouseMoveEvent(QMouseEvent* event)
+{
+    // Com Ctrl segurado, mostra a mãozinha sobre links de referência.
+    if (event->modifiers() & Qt::ControlModifier) {
+        const QString href = anchorAt(event->pos());
+        viewport()->setCursor(isRefHref(href) ? Qt::PointingHandCursor : Qt::IBeamCursor);
+    }
+    QTextEdit::mouseMoveEvent(event);
 }

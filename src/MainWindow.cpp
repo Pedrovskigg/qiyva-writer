@@ -109,6 +109,7 @@
 #include "LousaPanel.h"
 #include "TimelinePanel.h"
 #include "CharacterSheetPanel.h"
+#include "MentionPopup.h"
 #include "RemindersPanel.h"
 #include "RemindersStore.h"
 #include "GroupsPanel.h"
@@ -960,6 +961,20 @@ void MainWindow::setupEditor()
             [this](const QString& word, const QPoint& gp) {
         if (!glossaryAddPopup) return;
         glossaryAddPopup->presentAt(gp, word);
+    });
+    // Autocomplete de menções (@) no editor principal.
+    mentionPopup = new MentionPopup(projectModel, this, this);
+    mentionPopup->attach(editor);
+    // Ctrl+clique num link de referência (menção @ / Codex) abre o doc no RefMenu.
+    connect(editor, &SpellEditor::refActivated, this, [this](const QString& href) {
+        // href = "ref:<drawerKey>:<itemId>"
+        const int firstColon = href.indexOf(QLatin1Char(':'));
+        const int secondColon = href.indexOf(QLatin1Char(':'), firstColon + 1);
+        if (firstColon < 0 || secondColon < 0) return;
+        const QString drawerKey = href.mid(firstColon + 1, secondColon - firstColon - 1);
+        const QString itemId = href.mid(secondColon + 1);
+        if (refMenuPanel && !drawerKey.isEmpty() && !itemId.isEmpty())
+            refMenuPanel->openForDrawer(drawerKey, itemId);
     });
     connect(glossaryAddPopup, &GlossaryAddPopup::confirmed, this,
             [this](const QString& term, const QString& def) {

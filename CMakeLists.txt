@@ -171,6 +171,8 @@ qt_add_executable(mira-writing
     src/LousaTypes.h
     src/CharacterSheetPanel.cpp
     src/CharacterSheetPanel.h
+    src/MentionPopup.cpp
+    src/MentionPopup.h
     src/TimelineTypes.h
     src/TimelineScene.cpp
     src/TimelineScene.h
