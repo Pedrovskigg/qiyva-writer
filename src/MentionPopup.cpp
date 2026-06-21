@@ -7,10 +7,12 @@
 #include <QEvent>
 #include <QKeyEvent>
 #include <QListWidget>
+#include <QPointer>
 #include <QTextBlock>
 #include <QTextEdit>
 #include <QTextCursor>
 #include <QTextCharFormat>
+#include <QTimer>
 #include <QWidget>
 
 MentionPopup::MentionPopup(ProjectModel* model, QWidget* ownerWindow, QObject* parent)
@@ -199,9 +201,17 @@ void MentionPopup::confirm()
     cur.insertText(title, linkFmt);
     cur.insertText(QStringLiteral(" "), base);
     cur.endEditBlock();
-
     ed->setTextCursor(cur);
-    ed->setCurrentCharFormat(base);   // novo texto digitado não herda o link
+
+    // O confirm roda DENTRO do keyPress (espaço/enter) que dispara a confirmação;
+    // o QTextEdit reverte o currentCharFormat no pós-processamento do evento.
+    // Aplicar o formato base no próximo ciclo garante que o texto seguinte não
+    // herde o anchor (era isso que "vazava" o link pelo resto da linha/parágrafo).
+    QPointer<QTextEdit> edPtr(ed);
+    const QTextCharFormat baseCopy = base;
+    QTimer::singleShot(0, ed, [edPtr, baseCopy]() {
+        if (edPtr) edPtr->setCurrentCharFormat(baseCopy);
+    });
     hidePopup();
 }
 
