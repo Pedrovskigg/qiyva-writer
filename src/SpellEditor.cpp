@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QContextMenuEvent>
+#include <QFocusEvent>
 #include <QFont>
 #include <QKeyEvent>
 #include <QMenu>
@@ -125,6 +126,7 @@ void SpellEditor::mousePressEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier)) {
         const QString href = anchorAt(event->pos());
         if (isRefHref(href)) {
+            emit refHighlightRequested(false);   // o clique vai tirar o foco; limpa o realce
             emit refActivated(href);
             event->accept();
             return;
@@ -155,4 +157,11 @@ void SpellEditor::keyReleaseEvent(QKeyEvent* event)
     if (event->key() == Qt::Key_Control && !event->isAutoRepeat())
         emit refHighlightRequested(false);
     QTextEdit::keyReleaseEvent(event);
+}
+
+void SpellEditor::focusOutEvent(QFocusEvent* event)
+{
+    // Sem foco, o keyRelease do Ctrl não chega — limpa o realce pra não ficar preso.
+    emit refHighlightRequested(false);
+    QTextEdit::focusOutEvent(event);
 }
