@@ -346,6 +346,10 @@ private:
     int paragraphSpacingBefore;
     int paragraphSpacingAfter;
     bool focusModeEnabled;
+    // Enquanto o Ctrl está segurado ("ver os links"), o foco é suspenso para não
+    // cobrir o realce das menções (uma seleção de foco que contém a da menção a
+    // engole no render do Qt). Solto o Ctrl, o foco volta.
+    bool refHighlightActive = false;
     bool readModeEnabled = false;
     QWidget *readModeHotTop = nullptr;   // faixa de hover no topo (filho de this)
     QWidget *readModeHotLeft = nullptr;  // faixa de hover à esquerda (filho do container)

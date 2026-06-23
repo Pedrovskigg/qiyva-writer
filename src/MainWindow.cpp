@@ -965,10 +965,15 @@ void MainWindow::setupEditor()
     // Autocomplete de menções (@) no editor principal.
     mentionPopup = new MentionPopup(projectModel, this, this);
     mentionPopup->attach(editor);
-    // Quando o vigia limpa um anchor herdado (assíncrono), o Focus Mode precisa
-    // recalcular o realce do bloco — senão o trecho pós-menção fica desfocado.
+    // O texto digitado após uma menção herda o formato NoBrush dela (sem foreground
+    // explícito), e a seleção de foco não cobre texto sem foreground. Ao tocar o doc,
+    // re-grava o foreground (applyTextColor) — o trecho novo passa a ser coberto pelo
+    // foco, e o texto seguinte herda certo.
     connect(mentionPopup, &MentionPopup::documentTouched, this, [this]() {
-        if (focusModeEnabled) updateFocusedBlock();
+        if (focusModeEnabled) {
+            applyTextColor();
+            updateFocusedBlock();
+        }
     });
     // Ctrl+clique num link de referência (menção @ / Codex) abre o doc no RefMenu.
     connect(editor, &SpellEditor::refActivated, this, [this](const QString& href) {
@@ -983,7 +988,15 @@ void MainWindow::setupEditor()
     });
     // "Modo ver os links": enquanto Ctrl está segurado, realça as menções/refs.
     connect(editor, &SpellEditor::refHighlightRequested, this, [this](bool on) {
-        if (!on || !editor) { setEditorSelectionsLayer(QStringLiteral("mentionLinks"), {}); return; }
+        refHighlightActive = on && editor;
+        if (!on || !editor) {
+            setEditorSelectionsLayer(QStringLiteral("mentionLinks"), {});
+            if (focusModeEnabled) updateFocusedBlock();   // Ctrl solto: restaura o foco
+            return;
+        }
+        // Suspende o foco: uma seleção de foco que contém a da menção engole o
+        // realce no render do Qt. Sem foco, o accent das menções aparece.
+        if (focusModeEnabled) setEditorSelectionsLayer(QStringLiteral("focus"), {});
         QList<QTextEdit::ExtraSelection> sels;
         const QColor linkColor(Theme::accentDefault());
         QTextDocument* doc = editor->document();
@@ -2603,6 +2616,9 @@ void MainWindow::setFocusMode(bool enabled)
 
 void MainWindow::updateFocusedBlock()
 {
+    // Com o Ctrl segurado ("ver os links"), o foco fica suspenso — não recompõe.
+    if (refHighlightActive) { setEditorSelectionsLayer(QStringLiteral("focus"), {}); return; }
+
     QList<QTextEdit::ExtraSelection> selections;
     QTextBlock block = editor->textCursor().block();
     if (!block.isValid()) {
@@ -2613,41 +2629,37 @@ void MainWindow::updateFocusedBlock()
     QColor focused = baseTextColor;
     focused.setAlpha(255);
 
-    // ===== DEBUG TEMP — dump de fragmentos do bloco focado =====
-    QString dbg;
-    dbg += QStringLiteral("--- updateFocusedBlock cursorPos=%1 block=[%2..%3] text=\"%4\"\n")
-        .arg(editor->textCursor().position())
-        .arg(block.position()).arg(block.position() + block.length())
-        .arg(block.text().left(80));
-
-    // Uma ExtraSelection por fragmento, pulando fragmentos com background
-    // (markers). Sem isso, o foreground da ExtraSelection sobrepõe o
-    // foreground de contraste do marker e o texto highlighted vira a cor
-    // do tema — invisível contra o fundo claro do marker.
+    // Funde fragmentos contíguos numa única seleção, pulando (e quebrando o run em)
+    // fragmentos com background de marker — senão o foreground da ExtraSelection
+    // sobrepõe o foreground de contraste do marker e o texto highlighted vira a cor
+    // do tema, invisível contra o fundo claro do marker.
+    // A fusão também conserta o foco depois de uma menção: uma ExtraSelection que
+    // começa EXATAMENTE no fim de um anchor não renderizava (o Qt não aplicava o
+    // foreground ali). Cobrindo o trecho inteiro sem fronteira no limite do anchor,
+    // o foco pega na linha toda.
+    int runStart = -1;
+    int runEnd = -1;
+    auto flushRun = [&]() {
+        if (runStart < 0) return;
+        QTextEdit::ExtraSelection sel;
+        sel.format.setForeground(focused);
+        sel.cursor = QTextCursor(editor->document());
+        sel.cursor.setPosition(runStart);
+        sel.cursor.setPosition(runEnd, QTextCursor::KeepAnchor);
+        selections.append(sel);
+        runStart = runEnd = -1;
+    };
     for (auto it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment frag = it.fragment();
         if (!frag.isValid() || frag.length() == 0) continue;
         const QBrush bg = frag.charFormat().background();
         const bool skipped = (bg.style() != Qt::NoBrush && bg.color().alpha() > 0);
-        dbg += QStringLiteral("    frag pos=%1 len=%2 anchor=%3 href=%4 bgStyle=%5 bgAlpha=%6 skip=%7 txt=\"%8\"\n")
-            .arg(frag.position()).arg(frag.length())
-            .arg(frag.charFormat().isAnchor()).arg(frag.charFormat().anchorHref())
-            .arg(int(bg.style())).arg(bg.color().alpha()).arg(skipped)
-            .arg(QString(frag.text()).left(40));
-        if (skipped) continue;
+        if (skipped) { flushRun(); continue; }
 
-        QTextEdit::ExtraSelection sel;
-        sel.format.setForeground(focused);
-        sel.cursor = QTextCursor(editor->document());
-        sel.cursor.setPosition(frag.position());
-        sel.cursor.setPosition(frag.position() + frag.length(),
-                               QTextCursor::KeepAnchor);
-        selections.append(sel);
+        if (runStart < 0) runStart = frag.position();
+        runEnd = frag.position() + frag.length();
     }
-    {
-        QFile f(QStringLiteral("c:/mira-writing/mira-cpp/focus_debug.log"));
-        if (f.open(QIODevice::Append | QIODevice::Text)) { f.write(dbg.toUtf8()); f.close(); }
-    }
+    flushRun();
     setEditorSelectionsLayer(QStringLiteral("focus"), selections);
 }
 
