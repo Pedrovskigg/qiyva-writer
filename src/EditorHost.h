@@ -68,6 +68,7 @@ private slots:
 private:
     void loadIntoEditor(const QString& html);
     void replaceContent(const QString& html);
+    void normalizeRefAnchors();
     QString hydrateFromModel(const ViewMode& vm) const;
     bool tryConvertHrShortcut();
 

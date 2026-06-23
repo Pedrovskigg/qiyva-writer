@@ -11,8 +11,10 @@
 #include <QKeyEvent>
 #include <QRegularExpression>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextEdit>
+#include <QTextFragment>
 #include <QTimer>
 
 namespace {
@@ -364,9 +366,40 @@ void EditorHost::replaceContent(const QString& html) {
         m_editor->clear();
     } else {
         m_editor->setHtml(html);
+        normalizeRefAnchors();
     }
     doc->setUndoRedoEnabled(undoWas);
     m_editor->setUpdatesEnabled(true);
     emit contentLoaded();
     m_loadingContent = false;
+}
+
+void EditorHost::normalizeRefAnchors() {
+    // O toHtml() serializa as menções como <a href="ref:...">. Ao recarregar, o
+    // motor de rich text do Qt aplica o estilo padrão de link (sublinhado) — daí o
+    // underline "fantasma" que volta sempre que o doc é reaberto. As menções devem
+    // ser invisíveis em repouso (só o Ctrl as realça), então tiramos o sublinhado
+    // herdado de TODO anchor "ref:", sem mexer no href.
+    if (!m_editor) return;
+    QTextDocument* doc = m_editor->document();
+    const bool wasModified = doc->isModified();
+    for (QTextBlock b = doc->begin(); b.isValid(); b = b.next()) {
+        for (QTextBlock::iterator it = b.begin(); !it.atEnd(); ++it) {
+            const QTextFragment frag = it.fragment();
+            if (!frag.isValid()) continue;
+            const QTextCharFormat fmt = frag.charFormat();
+            if (!fmt.isAnchor() || !fmt.anchorHref().startsWith(QStringLiteral("ref:")))
+                continue;
+            if (!fmt.fontUnderline() && fmt.underlineStyle() == QTextCharFormat::NoUnderline)
+                continue;
+            QTextCursor c(doc);
+            c.setPosition(frag.position());
+            c.setPosition(frag.position() + frag.length(), QTextCursor::KeepAnchor);
+            QTextCharFormat clr;
+            clr.setFontUnderline(false);
+            clr.setUnderlineStyle(QTextCharFormat::NoUnderline);
+            c.mergeCharFormat(clr);
+        }
+    }
+    doc->setModified(wasModified);
 }
