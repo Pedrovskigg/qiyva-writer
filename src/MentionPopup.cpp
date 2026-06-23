@@ -58,9 +58,17 @@ void MentionPopup::attach(QTextEdit* editor)
     });
 }
 
-void MentionPopup::onContentsChange(QTextEdit* ed, int pos, int /*removed*/, int added)
+void MentionPopup::onContentsChange(QTextEdit* ed, int pos, int removed, int added)
 {
     if (m_insertingMention || m_cleaningAnchor || added <= 0) return;
+    // Só age em INSERÇÃO pura de texto. Mudança de formato (ex.: o mergeCharFormat
+    // do applyTextColor no Focus Mode) chega com removed==added e NÃO deve limpar o
+    // anchor da menção — senão a tag perde o link quando há texto após ela na linha.
+    if (removed != 0) return;
+    // Um vazamento real é SEMPRE um caractere digitado que herdou o anchor. Um chunk
+    // (menção inserida de uma vez, paste, load do doc) nunca é vazamento — e limpar
+    // [pos..pos+added] aí destruiria o anchor da própria menção. Só age em 1 char.
+    if (added != 1) return;
     QTextDocument* doc = ed->document();
 
     // O texto recém-inserido herdou um anchor "ref:"? (checa o 1º caractere.)
