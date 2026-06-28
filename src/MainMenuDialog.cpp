@@ -1,5 +1,6 @@
 #include "MainMenuDialog.h"
 
+#include "AboutDialog.h"
 #include "IconUtils.h"
 #include "ProjectStorage.h"
 #include "Quotes.h"
@@ -365,6 +366,7 @@ struct CardCallbacks {
     std::function<void(bool)> autoOpen;    // toggle "abrir automaticamente"
     std::function<void(QWidget*, bool)> hover; // enter/leave → escurecer outros
     std::function<void()> edit;            // context menu → editar
+    std::function<void()> coverCreate;     // context menu → criar capa
     std::function<void()> removeRecent;    // context menu → remover dos recentes
     std::function<void()> del;             // context menu → excluir projeto
 };
@@ -471,13 +473,16 @@ protected:
         QMenu menu(this);
         menu.setObjectName(QStringLiteral("bookCardMenu"));
         QAction* aEdit   = menu.addAction(tr("Editar projeto"));
+        QAction* aCover  = menu.addAction(tr("Criar capa"));
+        menu.addSeparator();
         QAction* aRemove = menu.addAction(tr("Remover dos recentes"));
         menu.addSeparator();
         QAction* aDelete = menu.addAction(tr("Excluir projeto"));
         QAction* chosen = menu.exec(event->globalPos());
-        if (chosen == aEdit && m_cbs.edit)            m_cbs.edit();
+        if      (chosen == aEdit   && m_cbs.edit)        m_cbs.edit();
+        else if (chosen == aCover  && m_cbs.coverCreate)  m_cbs.coverCreate();
         else if (chosen == aRemove && m_cbs.removeRecent) m_cbs.removeRecent();
-        else if (chosen == aDelete && m_cbs.del)      m_cbs.del();
+        else if (chosen == aDelete && m_cbs.del)          m_cbs.del();
     }
 
 private:
@@ -593,13 +598,16 @@ protected:
         QMenu menu(this);
         menu.setObjectName(QStringLiteral("bookCardMenu"));
         QAction* aEdit   = menu.addAction(tr("Editar projeto"));
+        QAction* aCover  = menu.addAction(tr("Criar capa"));
+        menu.addSeparator();
         QAction* aRemove = menu.addAction(tr("Remover dos recentes"));
         menu.addSeparator();
         QAction* aDelete = menu.addAction(tr("Excluir projeto"));
         QAction* chosen = menu.exec(event->globalPos());
-        if (chosen == aEdit && m_cbs.edit)                m_cbs.edit();
-        else if (chosen == aRemove && m_cbs.removeRecent) m_cbs.removeRecent();
-        else if (chosen == aDelete && m_cbs.del)          m_cbs.del();
+        if      (chosen == aEdit   && m_cbs.edit)         m_cbs.edit();
+        else if (chosen == aCover  && m_cbs.coverCreate)   m_cbs.coverCreate();
+        else if (chosen == aRemove && m_cbs.removeRecent)  m_cbs.removeRecent();
+        else if (chosen == aDelete && m_cbs.del)           m_cbs.del();
     }
 
 private:
@@ -1017,6 +1025,18 @@ void MainMenuDialog::buildSidebar(QVBoxLayout* col)
     });
     langRow->addWidget(langLbl);
     langRow->addWidget(m_langCombo, 1);
+
+    auto* infoBtn = new QPushButton(QStringLiteral("ⓘ"), this);
+    infoBtn->setObjectName(QStringLiteral("menuInfoBtn"));
+    infoBtn->setCursor(Qt::PointingHandCursor);
+    infoBtn->setFixedSize(24, 24);
+    infoBtn->setToolTip(tr("Sobre o Mira Writing"));
+    connect(infoBtn, &QPushButton::clicked, this, [this]() {
+        AboutDialog dlg(this);
+        dlg.exec();
+    });
+    langRow->addWidget(infoBtn);
+
     col->addLayout(langRow);
 }
 
@@ -1185,6 +1205,7 @@ void MainMenuDialog::populateActiveView()
             setHoveredCard(entered ? c : nullptr);
         };
         cbs.edit = [this, capturedPath]() { editProject(capturedPath); };
+        cbs.coverCreate = [this, capturedPath]() { launchMiraCover(capturedPath); };
         cbs.removeRecent = [this, capturedPath]() { emit removeRecentRequested(capturedPath); };
         cbs.del = [this, capturedPath]() { confirmDeleteProject(capturedPath); };
 
@@ -1269,6 +1290,105 @@ void MainMenuDialog::editProject(const QString& path)
         return;
     }
     refreshRecents();
+}
+
+void MainMenuDialog::launchMiraCover(const QString& projectPath)
+{
+    const QString exeDir = QCoreApplication::applicationDirPath();
+
+    // ── 1) Produção: Cover Creator já instalado ────────────────────────────
+    const QString installedExe = exeDir + QStringLiteral("/Cover Creator/Mira Cover.exe");
+    if (QFile::exists(installedExe)) {
+        startCoverProcess(installedExe, { projectPath }, QString(), projectPath);
+        return;
+    }
+
+    // ── 2) Produção: setup disponível — perguntar se quer instalar ─────────
+    const QString setupExe = exeDir + QStringLiteral("/Cover Creator/Mira Cover Setup.exe");
+    if (QFile::exists(setupExe)) {
+        const auto resp = QMessageBox::question(
+            this, tr("Cover Creator"),
+            tr("O Cover Creator ainda não está instalado.\n\n"
+               "Deseja instalá-lo agora? (rápido, sem precisar de internet)"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (resp != QMessageBox::Yes) return;
+
+        const QString exeToUse = QFile::copy(setupExe, installedExe)
+                                 ? installedExe : setupExe;
+        startCoverProcess(exeToUse, { projectPath }, QString(), projectPath);
+        return;
+    }
+
+    // ── 3) Dev: diretório mira-cover irmão ────────────────────────────────
+    const QString devCoverDir = QDir::cleanPath(
+        exeDir + QStringLiteral("/../../mira-cover"));
+    const QString devElectron = devCoverDir +
+        QStringLiteral("/node_modules/electron/dist/electron.exe");
+
+    if (QFile::exists(devElectron)) {
+        if (!QFile::exists(devCoverDir + QStringLiteral("/dist/index.html"))) {
+            QMessageBox::information(this, tr("Cover Creator"),
+                tr("Execute 'npm run build' no diretório mira-cover para "
+                   "habilitar o criador de capas no modo desenvolvimento."));
+            return;
+        }
+        startCoverProcess(devElectron, { devCoverDir, projectPath },
+                          devCoverDir, projectPath);
+        return;
+    }
+
+    QMessageBox::information(this, tr("Cover Creator"),
+        tr("O Cover Creator não foi encontrado.\n\n"
+           "Reinstale o Mira Writing para obter o Cover Creator."));
+}
+
+void MainMenuDialog::startCoverProcess(const QString& program,
+                                       const QStringList& args,
+                                       const QString& workingDir,
+                                       const QString& projectPath)
+{
+    QProcess* proc = new QProcess(this);
+    if (!workingDir.isEmpty()) proc->setWorkingDirectory(workingDir);
+
+    connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, projectPath, proc](int, QProcess::ExitStatus) {
+        proc->deleteLater();
+        updateCoverFromFile(projectPath);
+    });
+
+    proc->start(program, args);
+}
+
+void MainMenuDialog::updateCoverFromFile(const QString& projectPath)
+{
+    const QString coverFilePath = projectPath + QStringLiteral("/cover.jpg");
+    if (!QFile::exists(coverFilePath)) return;
+
+    QFile f(coverFilePath);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const QByteArray bytes = f.readAll();
+    f.close();
+    if (bytes.isEmpty()) return;
+
+    const QString dataUrl = QStringLiteral("data:image/jpeg;base64,") +
+                            QString::fromLatin1(bytes.toBase64());
+
+    bool ok = false;
+    QJsonObject idx = ProjectStorage::readIndex(projectPath, &ok);
+    if (!ok) return;
+
+    QJsonObject projectData = idx.value(QStringLiteral("data")).toObject();
+    QJsonObject details     = projectData.value(QStringLiteral("projectDetails")).toObject();
+    details.insert(QStringLiteral("cover"),     dataUrl);
+    details.insert(QStringLiteral("coverFull"), dataUrl);
+    projectData.insert(QStringLiteral("projectDetails"), details);
+    idx.insert(QStringLiteral("data"), projectData);
+
+    QString err;
+    if (ProjectStorage::writeIndex(projectPath, idx, &err)) {
+        refreshRecents();
+        emit coverUpdated(projectPath);
+    }
 }
 
 void MainMenuDialog::confirmDeleteProject(const QString& path)
@@ -1367,6 +1487,18 @@ void MainMenuDialog::applyDialogStyle()
         QPushButton#menuSecondaryBtn:hover { background: %7; color: %3; border-color: %9; }
 
         #menuLangLabel { color: %4; font-size: 11px; }
+        QPushButton#menuInfoBtn {
+            background: transparent;
+            color: %4;
+            border: 1px solid %6;
+            border-radius: 12px;
+            font-size: 13px;
+            padding: 0;
+        }
+        QPushButton#menuInfoBtn:hover {
+            color: %3;
+            border-color: %9;
+        }
         QComboBox#menuLangCombo {
             background: %1;
             color: %2;

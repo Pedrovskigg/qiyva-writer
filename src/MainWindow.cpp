@@ -4057,6 +4057,34 @@ void MainWindow::openMainMenu()
                     }
                     if (mainMenuDialog) mainMenuDialog->setRecentProjects(list);
                 });
+        connect(mainMenuDialog, &MainMenuDialog::coverUpdated,
+                this, [this](const QString& updatedPath) {
+                    // Se o projeto alterado está aberto no editor, recarrega a capa.
+                    if (!projectRoot.isEmpty()
+                        && QDir::cleanPath(projectRoot) == QDir::cleanPath(updatedPath)
+                        && projectModel) {
+                        // Relê a capa do JSON já atualizado pelo MainMenuDialog.
+                        bool ok = false;
+                        const QJsonObject idx = ProjectStorage::readIndex(projectRoot, &ok);
+                        if (!ok) return;
+                        const QJsonObject pd = idx.value(QStringLiteral("data"))
+                            .toObject().value(QStringLiteral("projectDetails")).toObject();
+                        const QString cover = pd.value(QStringLiteral("coverFull")).toString().isEmpty()
+                            ? pd.value(QStringLiteral("cover")).toString()
+                            : pd.value(QStringLiteral("coverFull")).toString();
+                        if (!cover.isEmpty()) {
+                            projectModel->setProjectDetails(
+                                projectModel->projectName(),
+                                projectModel->projectAuthor(),
+                                projectModel->projectGenres(),
+                                projectModel->projectSynopsis(),
+                                cover);
+                        }
+                        // Força atualização do painel se estiver visível.
+                        if (projectInfoPanel && projectInfoPanel->isVisible())
+                            projectInfoPanel->loadFromModel();
+                    }
+                });
     }
     mainMenuDialog->setRecentProjects(loadRecentProjects());
     mainMenuDialog->setAutoOpenPath(

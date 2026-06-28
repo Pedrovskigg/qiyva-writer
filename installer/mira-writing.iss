@@ -10,6 +10,8 @@
 #define MyAppExeName    "mira-writing.exe"
 #define BuildDir        "..\build-release"
 #define ResourceDir     "..\resources"
+; Portable do Mira Cover gerado por: cd mira-cover && npm run dist:win
+#define CoverPortable   "..\..\mira-cover\builds\Mira Cover\Mira Cover.exe"
 
 [Setup]
 AppId={{A3F2B6E0-7C5D-4D9C-9A3B-MIRA2-PREVIEW0001}
@@ -40,6 +42,16 @@ ShowLanguageDialog=auto
 [Languages]
 Name: "pt_BR"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "en";    MessagesFile: "compiler:Default.isl"
+
+[Types]
+Name: "standard"; Description: "Instalação padrão"
+Name: "full";     Description: "Instalação completa (com Cover Creator)"
+Name: "custom";   Description: "Instalação personalizada"; Flags: iscustom
+
+[Components]
+; Cover Creator — opcional, desmarcado na instalação padrão.
+; O setup (.exe) é sempre copiado para a pasta, permitindo instalação posterior.
+Name: "covercreator"; Description: "Cover Creator — criador de capas de livro"; Types: full custom; ExtraDiskSpaceRequired: 180000000
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -79,6 +91,11 @@ Source: "{#BuildDir}\ambience-sounds\*";     DestDir: "{app}\ambience-sounds";  
 Source: "{#BuildDir}\theme-images\*";        DestDir: "{app}\theme-images";        Flags: ignoreversion recursesubdirs
 Source: "{#BuildDir}\logo\*";                DestDir: "{app}\logo";                Flags: ignoreversion recursesubdirs
 
+; Cover Creator — setup sempre presente para instalação posterior
+Source: "{#CoverPortable}"; DestDir: "{app}\Cover Creator"; DestName: "Mira Cover Setup.exe"; Flags: ignoreversion; Check: CoverPortableExists
+; Cover Creator — exe pronto se o user aceitou no setup
+Source: "{#CoverPortable}"; DestDir: "{app}\Cover Creator"; DestName: "Mira Cover.exe"; Flags: ignoreversion; Components: covercreator; Check: CoverPortableExists
+
 [Icons]
 Name: "{group}\{#MyAppName}";              Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Desinstalar {#MyAppName}";  Filename: "{uninstallexe}"
@@ -86,3 +103,10 @@ Name: "{autodesktop}\{#MyAppName}";        Filename: "{app}\{#MyAppExeName}"; Ta
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+{ Só inclui os arquivos do Cover Creator se o portable já foi buildado. }
+function CoverPortableExists: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{src}\..\..\mira-cover\builds\Mira Cover\Mira Cover.exe'));
+end;

@@ -44,6 +44,8 @@ signals:
     void removeRecentRequested(const QString& path);
     void deleteProjectRequested(const QString& path);
     void autoOpenChanged(const QString& path, bool enabled);
+    // Emitido após o Mira Cover fechar e a capa ser gravada no JSON do projeto.
+    void coverUpdated(const QString& projectPath);
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -75,6 +77,13 @@ private:
     // Mostra o diálogo de confirmação com countdown; ao confirmar, emite
     // deleteProjectRequested para o MainWindow fazer a exclusão de fato.
     void confirmDeleteProject(const QString& path);
+    // Lança o Mira Cover passando o caminho do projeto como argumento.
+    void launchMiraCover(const QString& projectPath);
+    // Inicia o processo do Mira Cover e conecta o sinal finished.
+    void startCoverProcess(const QString& program, const QStringList& args,
+                           const QString& workingDir, const QString& projectPath);
+    // Lê cover.jpg do projeto, converte para data URL e grava no JSON.
+    void updateCoverFromFile(const QString& projectPath);
     // Recolore os ícones dos botões de ação conforme o tema atual (SVG tintado
     // no load não acompanha troca de tema sozinho).
     void refreshActionIcons();
