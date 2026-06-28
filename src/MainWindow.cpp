@@ -723,6 +723,31 @@ void MainWindow::setupEditor()
     // sobrescreve os settings com formatação antiga.
     connect(editorHost, &EditorHost::contentLoaded, this, &MainWindow::applyEditorStyle);
 
+    // setHtml limpa d->resources, apagando os pixmaps pré-escalados de sessões
+    // anteriores. Repovoamos o cache para cada imagem do doc logo após o load,
+    // garantindo qualidade suave sem precisar redimensionar manualmente.
+    connect(editorHost, &EditorHost::contentLoaded, this, [this]() {
+        if (!editor) return;
+        std::function<void(QTextFrame*)> scan = [&](QTextFrame* frame) {
+            for (auto it = frame->begin(); !it.atEnd(); ++it) {
+                if (auto* child = it.currentFrame()) {
+                    scan(child);
+                } else {
+                    const QTextBlock block = it.currentBlock();
+                    for (auto bit = block.begin(); !bit.atEnd(); ++bit) {
+                        const QTextFragment frag = bit.fragment();
+                        if (!frag.charFormat().isImageFormat()) continue;
+                        const QTextImageFormat fmt = frag.charFormat().toImageFormat();
+                        const int w = static_cast<int>(fmt.width());
+                        if (w > 0 && !fmt.name().isEmpty())
+                            refreshImageResource(editor, QUrl(fmt.name()), w);
+                    }
+                }
+            }
+        };
+        scan(editor->document()->rootFrame());
+    });
+
     // Sincroniza settings do projeto ao carregar (line-height + indent + paragraph spacing).
     connect(projectModel, &ProjectModel::loaded, this, [this]() {
         if (!projectModel) return;
