@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "CrashLogger.h"
 #include "MainMenuDialog.h"
 #include "NewProjectFlow.h"
 #include "UpdateChecker.h"
@@ -760,12 +761,21 @@ void MainWindow::setupEditor()
         paragraphSpacingBefore = projectModel->paragraphSpacingBefore();
         paragraphSpacingAfter = projectModel->paragraphSpacingAfter();
         currentLineHeight = projectModel->lineHeightPercent();
+        currentFontSize = projectModel->fontSize();
+        const QString savedFamily = projectModel->fontFamily();
+        if (!availableFontFamilies.isEmpty() && availableFontFamilies.contains(savedFamily, Qt::CaseInsensitive)) {
+            currentFontFamily = savedFamily;
+        }
         if (toolbar) {
             toolbar->setFirstLineIndentEnabled(firstLineIndentEnabled);
             toolbar->setParagraphSpacingBefore(paragraphSpacingBefore);
             toolbar->setParagraphSpacingAfter(paragraphSpacingAfter);
             toolbar->setLineHeightPercent(currentLineHeight);
+            if (!availableFontFamilies.isEmpty())
+                toolbar->setFontFamilies(availableFontFamilies, currentFontFamily);
+            toolbar->setFontSize(currentFontSize);
         }
+        if (refMenuPanel) refMenuPanel->setEditorFontFamily(currentFontFamily);
         applyEditorStyle();
         applySpellLanguageFromModel();
     });
@@ -837,6 +847,7 @@ void MainWindow::setupEditor()
         const QString key = editorHost->activeKey();
         if (key.isEmpty()) return;
 
+        CrashLogger::log(QStringLiteral("detectPresence key=%1").arg(key));
         qDebug() << "[detect] iniciando scan para" << key;
         // Cancela scan anterior e prepara novo estado
         detectionBatchTimer->stop();
@@ -991,6 +1002,9 @@ void MainWindow::setupEditor()
 
         const Chapter* ch = projectModel->findChapter(vm.chapterId);
         if (!ch) return;
+
+        CrashLogger::log(QStringLiteral("detectDialogue chapterId=%1 scenes=%2")
+                          .arg(vm.chapterId).arg(ch->scenes.size()));
         const QString chTitle = !ch->title.isEmpty() ? ch->title : tr("Capítulo");
 
         const QList<Element> allElements = elementsStore->elements();
@@ -2607,15 +2621,22 @@ void MainWindow::setAvailableFontFamilies(const QStringList &families)
     if (families.isEmpty()) {
         return;
     }
+    availableFontFamilies = families;
+
+    // Só aplica a cadeia de fallback se a fonte atual (default de fábrica ou já
+    // restaurada de um projeto carregado antes desta chamada) não existir na
+    // lista — não pisar numa fonte válida com o padrão "Alegreya".
     QString preferredDefault = currentFontFamily;
-    if (families.contains(QStringLiteral("Alegreya"), Qt::CaseInsensitive)) {
-        preferredDefault = QStringLiteral("Alegreya");
-    } else if (families.contains(QStringLiteral("Lora"), Qt::CaseInsensitive)) {
-        preferredDefault = QStringLiteral("Lora");
-    } else if (families.contains(QStringLiteral("Crimson Text"), Qt::CaseInsensitive)) {
-        preferredDefault = QStringLiteral("Crimson Text");
-    } else {
-        preferredDefault = families.first();
+    if (!families.contains(preferredDefault, Qt::CaseInsensitive)) {
+        if (families.contains(QStringLiteral("Alegreya"), Qt::CaseInsensitive)) {
+            preferredDefault = QStringLiteral("Alegreya");
+        } else if (families.contains(QStringLiteral("Lora"), Qt::CaseInsensitive)) {
+            preferredDefault = QStringLiteral("Lora");
+        } else if (families.contains(QStringLiteral("Crimson Text"), Qt::CaseInsensitive)) {
+            preferredDefault = QStringLiteral("Crimson Text");
+        } else {
+            preferredDefault = families.first();
+        }
     }
     currentFontFamily = preferredDefault;
     toolbar->setFontFamilies(families, currentFontFamily);
@@ -2864,6 +2885,7 @@ void MainWindow::onAlignmentRequested(Qt::Alignment alignment, TopToolbar::Align
 void MainWindow::setFontFamily(const QString &family)
 {
     currentFontFamily = family;
+    if (projectModel) projectModel->setFontFamily(family);
     applyEditorStyle();
     if (characterSheetPanel && characterSheetPanel->isVisible())
         characterSheetPanel->setContentFont(sizedFont(currentFontFamily, currentFontSize));
@@ -2873,6 +2895,7 @@ void MainWindow::setFontFamily(const QString &family)
 void MainWindow::setFontSize(qreal pt)
 {
     currentFontSize = pt;
+    if (projectModel) projectModel->setFontSize(pt);
     applyEditorStyle();
     if (characterSheetPanel && characterSheetPanel->isVisible())
         characterSheetPanel->setContentFont(sizedFont(currentFontFamily, currentFontSize));

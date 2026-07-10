@@ -360,6 +360,7 @@ private:
         ScanResult result;
     };
     std::unique_ptr<DetectionScanState> m_scanState;
+    QStringList availableFontFamilies;
     QString currentFontFamily;
     qreal currentFontSize;
     int currentLineHeight;

@@ -406,6 +406,31 @@ void ProjectModel::setLineHeightPercent(int percent) {
     emit settingsChanged();
 }
 
+QString ProjectModel::fontFamily() const {
+    const auto v = m_settings.value(QStringLiteral("fontFamily"));
+    if (v.isUndefined() || v.isNull() || v.toString().isEmpty()) return QStringLiteral("Alegreya");
+    return v.toString();
+}
+
+void ProjectModel::setFontFamily(const QString& family) {
+    if (family.isEmpty() || fontFamily() == family) return;
+    m_settings.insert(QStringLiteral("fontFamily"), family);
+    emit settingsChanged();
+}
+
+qreal ProjectModel::fontSize() const {
+    const auto v = m_settings.value(QStringLiteral("fontSize"));
+    if (v.isUndefined() || v.isNull()) return 16.0;
+    return qBound(6.0, v.toDouble(16.0), 200.0);
+}
+
+void ProjectModel::setFontSize(qreal pt) {
+    const qreal clamped = qBound(6.0, pt, 200.0);
+    if (qFuzzyCompare(fontSize(), clamped)) return;
+    m_settings.insert(QStringLiteral("fontSize"), clamped);
+    emit settingsChanged();
+}
+
 QString ProjectModel::spellLanguage() const {
     const auto v = m_settings.value(QStringLiteral("spellLanguage"));
     if (v.isUndefined() || v.isNull()) return QString();

@@ -140,6 +140,12 @@ public:
     int lineHeightPercent() const;
     void setLineHeightPercent(int percent);
 
+    QString fontFamily() const;
+    void setFontFamily(const QString& family);
+
+    qreal fontSize() const;
+    void setFontSize(qreal pt);
+
     // "" = corretor desligado; "pt_BR", "en_US", ... = idioma do dicionário.
     QString spellLanguage() const;
     void setSpellLanguage(const QString& code);
