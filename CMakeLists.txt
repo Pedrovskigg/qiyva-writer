@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 3.16)
 
 # Versão única do app — também lida pelo installer (mira-writing.iss) via ISPP,
 # pra não precisar bumpar em dois lugares.
+# file(STRINGS) só é lido no configure — sem esse CONFIGURE_DEPENDS, um bump no
+# VERSION não força reconfigure e "cmake --build" sozinho continua embutindo a
+# versão antiga (cache velho), fazendo o UpdateChecker achar pra sempre que há
+# atualização nova mesmo já estando na última.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" APP_VERSION_STRING)
 string(STRIP "${APP_VERSION_STRING}" APP_VERSION_STRING)
 
