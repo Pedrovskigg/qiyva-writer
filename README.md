@@ -1,7 +1,75 @@
-Mira Writing 2 it's the remake of the original Mira Writing (jsx), but now completely rebuilded in C++/Qt. 
+# Mira Writing
 
-You can find the source code of the application in this repository. 
-For download of the releases, go to: https://github.com/Pedrovskigg/mira-writing-2-releases
+Mira Writing 2 is the remake of the original Mira Writing (JSX), now
+completely rebuilt in C++/Qt.
 
-------------------------------------------------------------------------------------------------
+This repository holds the **source code** of the application. For
+downloads of the releases, go to:
+https://github.com/Pedrovskigg/mira-writing-2-releases
 
+---
+
+Mira Writing is a text editor and multi-document manager built entirely for
+the craft of creative writing — drawers for characters, settings and
+objects, multi-manuscript projects, a visual Board for plotting, a Timeline,
+a world-building tool (the Builder), writing goals and stats, and more, all
+wrapped in a fully themeable editor with Focus Mode.
+
+Mira Writing is free — no subscriptions, no paywalled features. Made by one
+writer, for other writers.
+
+## Tech stack
+
+- C++17, Qt 6.8 (Core, Gui, Widgets, Svg, Multimedia, Network)
+- CMake + Ninja, MinGW-w64 (GCC) on Windows
+- [Hunspell](https://github.com/hunspell/hunspell) for spell-checking
+
+## Building from source (Windows)
+
+1. Install [Qt 6.8+](https://www.qt.io/download-open-source) (MinGW 64-bit
+   kit) and its bundled CMake/Ninja/MinGW under Qt Maintenance Tool, or your
+   own CMake 3.16+ / Ninja / MinGW-w64 toolchain.
+2. Clone Hunspell v1.7.2 into `third_party/hunspell` (not vendored in this
+   repo — see [cmake/Hunspell.cmake](cmake/Hunspell.cmake)):
+   ```powershell
+   git clone --depth 1 --branch v1.7.2 https://github.com/hunspell/hunspell.git third_party/hunspell
+   ```
+3. Configure and build:
+   ```powershell
+   $env:PATH = "C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;" + $env:PATH
+   & "C:\Qt\6.8.3\mingw_64\bin\qt-cmake.bat" -G Ninja -S . -B build
+   cmake --build build
+   ```
+4. Run it:
+   ```powershell
+   $env:PATH = "C:\Qt\6.8.3\mingw_64\bin;" + $env:PATH
+   & .\build\mira-writing.exe
+   ```
+
+The "Immersive Sound" ambient tracks (`src/assets/ambience-sounds/`) aren't
+included in this repo — the app builds and runs fine without them, just
+without that one feature's audio files.
+
+## Translations
+
+Mira Writing is currently available in PT-BR and EN-US, via Qt Linguist
+(`translations/*.ts`). Language switches at runtime through the Main Menu.
+
+## License
+
+GPL-3.0 — see [LICENSE](LICENSE). Third-party components (Qt, Hunspell,
+FFmpeg, bundled fonts, etc.) keep their own licenses — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Related projects
+
+- [Mira Cover Creator](https://github.com/Pedrovskigg/mira-cover-creator) —
+  cover design tool bundled with Mira Writing
+- [Mira's Maestro](https://github.com/Pedrovskigg/Maestro) — free musical
+  theory plugin
+
+## Contact
+
+`mirawritingeditor@gmail.com` — bugs, suggestions, and general contact.
+
+— P.H. Lobato
