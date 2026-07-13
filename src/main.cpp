@@ -54,6 +54,18 @@ QStringList registerCustomFonts()
     return result;
 }
 
+// Quotes.cpp cacheia o ciclo embaralhado como texto bruto (não traduzido) em
+// QSettings, pra persistir entre sessões — ver Quotes::next(). Esse cache
+// carrega o nome do app dentro do próprio texto de vários quotes, então
+// arrastar essas duas chaves de um rebrand pro outro deixaria quotes com o
+// nome antigo grudado no texto até o cache expirar sozinho. As duas
+// migrações abaixo pulam essas chaves de propósito, forçando o ciclo a ser
+// regerado do zero (com o texto atual) assim que uma migração acontece.
+const QSet<QString> kQuoteCacheKeysToSkip = {
+    QStringLiteral("quotes/cycle"),
+    QStringLiteral("quotes/pointer"),
+};
+
 // Migração única do rebranding Mira Writing → Qiyva Writer: copia todas as
 // chaves do registro antigo (HKCU\Software\Mira Writing\Mira Writing) pra
 // chave nova, preservando tema, idioma, progresso do contador de palavras,
@@ -68,6 +80,7 @@ void migrateSettingsFromMira()
     QSettings oldSettings(QStringLiteral("Mira Writing"), QStringLiteral("Mira Writing"));
     const QStringList keys = oldSettings.allKeys();
     for (const QString &key : keys) {
+        if (kQuoteCacheKeysToSkip.contains(key)) continue;
         newSettings.setValue(key, oldSettings.value(key));
     }
     newSettings.setValue(QStringLiteral("migratedFromMira"), true);
@@ -86,6 +99,7 @@ void migrateSettingsFromQiyva()
     QSettings oldSettings(QStringLiteral("Qiyva Writer"), QStringLiteral("Qiyva Writer"));
     const QStringList keys = oldSettings.allKeys();
     for (const QString &key : keys) {
+        if (kQuoteCacheKeysToSkip.contains(key)) continue;
         newSettings.setValue(key, oldSettings.value(key));
     }
     newSettings.setValue(QStringLiteral("migratedFromQiyva"), true);
