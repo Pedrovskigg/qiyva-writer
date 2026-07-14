@@ -71,6 +71,9 @@ FFmpeg, bundled fonts, etc.) keep their own licenses — see
 
 ## Contact
 
-`mirawritingeditor@gmail.com` — bugs, suggestions, and general contact.
+To report bugs, suggest new features or just scream about your plot at
+3:00 AM: `qennawriter@gmail.com`
+I can take a few hours or days to answer, but I will! I promise!
+Or you can reach me on GitHub as well, on Qenna's repository.
 
 — P.H. Lobato

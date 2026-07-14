@@ -211,7 +211,7 @@ static const char* const kQuotesFeature[] = {
     QT_TRANSLATE_NOOP("Quotes", u8"Caso não goste dos avisos de status dos personagens ou da detecção de presença deles nas cenas, essas opções podem ser desabilitadas nas configurações."),
     QT_TRANSLATE_NOOP("Quotes", u8"Caso queira registrar algum comentário sobre algum trecho do seu projeto, selecione-o e clique em 'adicionar comentário'."),
     QT_TRANSLATE_NOOP("Quotes", u8"Use a função de criar capas para deixar seus projetos mais bonitos no menu!"),
-    QT_TRANSLATE_NOOP("Quotes", u8"Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em mirawritingeditor@gmail.com."),
+    QT_TRANSLATE_NOOP("Quotes", u8"Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em qennawriter@gmail.com."),
     QT_TRANSLATE_NOOP("Quotes", u8"A função de criar manuscrito pode ser usada para escrever sagas inteiras no mesmo projeto."),
     QT_TRANSLATE_NOOP("Quotes", u8"Use a função de temas para personalizar o seu app como quiser."),
     QT_TRANSLATE_NOOP("Quotes", u8"Use a função de Timeline para organizar os eventos do seu projeto de forma cronológica, visual e intuitiva!"),

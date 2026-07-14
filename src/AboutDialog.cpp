@@ -54,15 +54,15 @@ AboutDialog::AboutDialog(QWidget* parent)
     emailRow->setContentsMargins(0, 0, 0, 0);
     emailRow->setSpacing(0);
 
-    m_emailBtn = new QPushButton(QStringLiteral("mirawritingeditor@gmail.com"), this);
+    m_emailBtn = new QPushButton(QStringLiteral("qennawriter@gmail.com"), this);
     m_emailBtn->setObjectName(QStringLiteral("aboutInlineBtn"));
     m_emailBtn->setCursor(Qt::PointingHandCursor);
     m_emailBtn->setToolTip(tr("Clique para copiar"));
     connect(m_emailBtn, &QPushButton::clicked, this, [this]() {
-        QGuiApplication::clipboard()->setText(QStringLiteral("mirawritingeditor@gmail.com"));
+        QGuiApplication::clipboard()->setText(QStringLiteral("qennawriter@gmail.com"));
         m_emailBtn->setText(tr("Copiado!"));
         QTimer::singleShot(2000, m_emailBtn, [this]() {
-            m_emailBtn->setText(QStringLiteral("mirawritingeditor@gmail.com"));
+            m_emailBtn->setText(QStringLiteral("qennawriter@gmail.com"));
         });
     });
     emailRow->addWidget(m_emailBtn);

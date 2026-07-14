@@ -12714,7 +12714,7 @@ Selecione um trecho e use o marcador com comentário para que ele apareça aqui.
     </message>
     <message>
         <location filename="../src/_quotes_data.inc" line="214"/>
-        <source>Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em mirawritingeditor@gmail.com.</source>
+        <source>Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em qennawriter@gmail.com.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

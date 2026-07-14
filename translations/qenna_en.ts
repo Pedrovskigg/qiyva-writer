@@ -12799,8 +12799,8 @@ Select a passage and use the marker with comment so it shows up here.</translati
     </message>
     <message>
         <location filename="../src/_quotes_data.inc" line="214"/>
-        <source>Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em mirawritingeditor@gmail.com.</source>
-        <translation>For contact, bug reports, or just to say hi, email me at mirawritingeditor@gmail.com.</translation>
+        <source>Para contato, relato de bugs ou só mandar um alô, me envie um e-mail em qennawriter@gmail.com.</source>
+        <translation>For contact, bug reports, or just to say hi, email me at qennawriter@gmail.com.</translation>
     </message>
     <message>
         <location filename="../src/_quotes_data.inc" line="215"/>
