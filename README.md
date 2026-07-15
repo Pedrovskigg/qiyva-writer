@@ -53,8 +53,9 @@ without that one feature's audio files.
 
 ## Translations
 
-Qenna Writer is currently available in PT-BR and EN-US, via Qt Linguist
-(`translations/*.ts`). Language switches at runtime through the Main Menu.
+Qenna Writer is currently available in PT-BR, EN-US, and ES, via Qt
+Linguist (`translations/*.ts`). Language switches at runtime through the
+Main Menu.
 
 ## License
 
